@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "/Users/threebros/.nvm/versions/node/v24.21.0/bin/npx",
+      "runtimeArgs": ["--prefix", "frontend", "vite", "frontend", "--port", "5174", "--strictPort"],
+      "port": 5174
+    }
+  ]
+}
