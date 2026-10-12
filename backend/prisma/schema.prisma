@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN // toàn quyền: quản lý user, kết nối tài khoản AdMob, xem mọi app
+  MANAGER // xem các app được gán, được bấm Update (sync)
+  VIEWER // chỉ xem các app được gán
+}
+
+enum SyncStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum SyncTrigger {
+  INITIAL
+  MANUAL
+  SCHEDULED
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  name         String
+  passwordHash String
+  role         Role            @default(VIEWER)
+  active       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  appAccess    UserAppAccess[]
+}
+
+model UserAppAccess {
+  userId String
+  appId  String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  app    App    @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  @@id([userId, appId])
+}
+
+model AdmobAccount {
+  id              String    @id @default(cuid())
+  publisherId     String    @unique // pub-XXXXXXXXXXXXXXXX
+  name            String
+  currencyCode    String
+  timeZone        String
+  refreshTokenEnc String // refresh token Google đã mã hoá AES-256-GCM
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  apps            App[]
+  adUnits         AdUnit[]
+  syncRuns        SyncRun[]
+}
+
+model App {
+  id          String          @id // ca-app-pub-XXX~YYY (AdMob app id, globally unique)
+  accountId   String
+  account     AdmobAccount    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name        String
+  platform    String // ANDROID | IOS
+  storeId     String? // package name trên Google Play
+  updatedAt   DateTime        @updatedAt
+  adUnits     AdUnit[]
+  userAccess  UserAppAccess[]
+
+  @@index([accountId])
+}
+
+model AdUnit {
+  id        String       @id // ca-app-pub-XXX/ZZZ
+  accountId String
+  account   AdmobAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  appId     String
+  app       App          @relation(fields: [appId], references: [id], onDelete: Cascade)
+  name      String
+  format    String // BANNER | INTERSTITIAL | REWARDED | NATIVE | APP_OPEN | ...
+  updatedAt DateTime     @updatedAt
+
+  @@index([appId])
+}
+
+/// Mediation report KHÔNG chia theo ad source: 1 dòng = 1 ngày x 1 ad unit x 1 quốc gia.
+/// Doanh thu/impression gồm mọi mạng (AdMob + mediation), request/match rate đúng ở cấp ad unit.
+model UnitStat {
+  id              BigInt   @id @default(autoincrement())
+  accountId       String
+  date            DateTime @db.Date
+  appId           String
+  adUnitId        String
+  format          String
+  country         String
+  earningsMicros  BigInt
+  impressions     BigInt
+  clicks          BigInt
+  adRequests      BigInt
+  matchedRequests BigInt
+
+  @@index([accountId, date])
+  @@index([appId, date])
+  @@index([date])
+}
+
+/// Mediation report chia theo ad source: 1 dòng = 1 ngày x 1 ad unit x 1 ad source (AdMob Network, Meta, AppLovin, ...).
+/// Chỉ dùng cho breakdown theo mạng quảng cáo (request ở đây là request waterfall gửi tới từng source).
+model SourceStat {
+  id              BigInt   @id @default(autoincrement())
+  accountId       String
+  date            DateTime @db.Date
+  appId           String
+  adUnitId        String
+  format          String
+  adSourceId      String
+  adSourceName    String
+  earningsMicros  BigInt
+  impressions     BigInt
+  clicks          BigInt
+  adRequests      BigInt
+  matchedRequests BigInt
+
+  @@index([accountId, date])
+  @@index([appId, date])
+  @@index([date])
+}
+
+model SyncRun {
+  id         String       @id @default(cuid())
+  accountId  String
+  account    AdmobAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  trigger    SyncTrigger
+  status     SyncStatus   @default(RUNNING)
+  fromDate   String // YYYY-MM-DD
+  toDate     String
+  rowCount   Int          @default(0)
+  error      String?
+  startedAt  DateTime     @default(now())
+  finishedAt DateTime?
+
+  @@index([accountId, startedAt])
+}
