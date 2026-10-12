@@ -1,11 +1,19 @@
 import { useState } from 'react';
-import { compact, money, num, pct } from '../format';
-import type { Metrics } from '../types';
+import { compact, money, num, pct, ratio } from '../format';
+import type { Metrics, SpendMetrics } from '../types';
 
-type Row = Metrics & { key: string; label: string };
-type SortKey = keyof Metrics;
+type Row = Metrics & Partial<SpendMetrics> & { key: string; label: string };
+type SortKey = keyof (Metrics & SpendMetrics);
 
-const COLUMNS: { key: SortKey; label: string; render: (m: Metrics) => string }[] = [
+const SPEND_COLUMNS: { key: SortKey; label: string; render: (m: Row) => string }[] = [
+  { key: 'spend', label: 'Chi phí', render: (m) => money(m.spend ?? 0) },
+  { key: 'profit', label: 'Lợi nhuận', render: (m) => money(m.profit ?? 0) },
+  { key: 'roas', label: 'ROAS', render: (m) => (m.spend ? ratio(m.roas ?? 0) : '—') },
+  { key: 'installs', label: 'Installs', render: (m) => num(m.installs ?? 0) },
+  { key: 'cpi', label: 'CPI', render: (m) => (m.installs ? money(m.cpi ?? 0) : '—') },
+];
+
+const COLUMNS: { key: SortKey; label: string; render: (m: Row) => string }[] = [
   { key: 'earnings', label: 'Doanh thu', render: (m) => money(m.earnings) },
   { key: 'ecpm', label: 'eCPM', render: (m) => money(m.ecpm) },
   { key: 'impressions', label: 'Impressions', render: (m) => num(m.impressions) },
@@ -16,19 +24,23 @@ const COLUMNS: { key: SortKey; label: string; render: (m: Metrics) => string }[]
   { key: 'ctr', label: 'CTR', render: (m) => pct(m.ctr) },
 ];
 
-export function MetricsTable({ rows, title, hideRequests, onRowClick }: {
+export function MetricsTable({ rows, title, hideRequests, showSpend, onRowClick }: {
   rows: Row[];
   title: string;
+  /** Thêm cột chi phí Facebook (chỉ có khi xem theo app / quốc gia). */
+  showSpend?: boolean;
   /** Ad source report: request là request waterfall nên match/show rate không có nghĩa so sánh. */
   hideRequests?: boolean;
   onRowClick?: (row: Row) => void;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'earnings', desc: true });
-  const columns = hideRequests
+  const base = hideRequests
     ? COLUMNS.filter((c) => !['adRequests', 'matchRate', 'showRate'].includes(c.key))
     : COLUMNS;
+  const columns = showSpend ? [base[0], ...SPEND_COLUMNS, ...base.slice(1)] : base;
   const total = rows.reduce((s, r) => s + r.earnings, 0);
-  const sorted = [...rows].sort((a, b) => (sort.desc ? b[sort.key] - a[sort.key] : a[sort.key] - b[sort.key]));
+  const value = (r: Row) => r[sort.key] ?? 0;
+  const sorted = [...rows].sort((a, b) => (sort.desc ? value(b) - value(a) : value(a) - value(b)));
 
   return (
     <div className="card table-card">

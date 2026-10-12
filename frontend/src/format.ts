@@ -8,6 +8,8 @@ export const num = (v: number) => new Intl.NumberFormat('en-US').format(Math.rou
 export const compact = (v: number) =>
   new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(v);
 
+export const ratio = (v: number) => `${v.toFixed(2)}x`;
+
 export const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
 export function delta(current: number, previous: number): number | null {
@@ -30,6 +32,18 @@ export function relative(iso: string | null) {
 }
 
 const regionNames = new Intl.DisplayNames(['vi'], { type: 'region' });
+const regionNamesEn = new Intl.DisplayNames(['en'], { type: 'region' });
+
+/** Tuỳ chọn quốc gia cho ô tìm kiếm: hiện "Việt Nam (VN)", tìm được cả "Vietnam" và "vn". */
+export function countryOptions(codes: string[]) {
+  return codes
+    .map((c) => {
+      let en = '';
+      try { en = regionNamesEn.of(c) ?? ''; } catch { /* mã không hợp lệ, ví dụ ZZ */ }
+      return { value: c, label: `${countryName(c)} (${c})`, keywords: en };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+}
 export function countryName(code: string) {
   try {
     return regionNames.of(code) ?? code;
@@ -58,3 +72,7 @@ export function daysAgo(n: number) {
   d.setDate(d.getDate() - n);
   return isoDate(d);
 }
+
+/** Bỏ dấu tiếng Việt và chữ hoa để tìm kiếm: "viet nam" khớp "Việt Nam". */
+export const fold = (s: string) =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();

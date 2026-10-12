@@ -146,3 +146,48 @@ model SyncRun {
 
   @@index([accountId, startedAt])
 }
+
+/// Tài khoản quảng cáo Facebook (Meta), token System User mã hoá AES-256-GCM.
+model FbAdAccount {
+  id           String       @id // act_XXXXXXXX
+  name         String
+  currencyCode String
+  timeZone     String
+  tokenEnc     String
+  lastSyncedAt DateTime?
+  lastError    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  campaigns    FbCampaign[]
+}
+
+/// Chiến dịch Facebook. App được xác định theo storeId (package name) khớp với App.storeId,
+/// hoặc gán tay bằng appId (ưu tiên hơn).
+model FbCampaign {
+  id        String      @id
+  accountId String
+  account   FbAdAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name      String
+  storeId   String? // package name lấy từ promoted_object của chiến dịch / ad set
+  appId     String? // gán tay, ghi đè storeId
+  updatedAt DateTime    @updatedAt
+
+  @@index([accountId])
+}
+
+/// Chi phí quảng cáo: 1 dòng = 1 ngày x 1 chiến dịch x 1 quốc gia (ngày theo múi giờ tài khoản quảng cáo).
+model AdSpendStat {
+  id          BigInt   @id @default(autoincrement())
+  accountId   String
+  date        DateTime @db.Date
+  campaignId  String
+  country     String
+  spendMicros BigInt
+  impressions BigInt
+  clicks      BigInt
+  installs    BigInt
+
+  @@index([accountId, date])
+  @@index([campaignId, date])
+  @@index([date])
+}

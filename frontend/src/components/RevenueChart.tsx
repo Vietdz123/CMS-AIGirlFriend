@@ -1,16 +1,18 @@
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, CartesianGrid, Legend, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { compact, money, num } from '../format';
 import type { TimePoint } from '../types';
 
-export type ChartMetric = 'earnings' | 'ecpm' | 'impressions';
+export type ChartMetric = 'earnings' | 'profit' | 'ecpm' | 'impressions';
 
 const LABELS: Record<ChartMetric, string> = {
   earnings: 'Doanh thu',
+  profit: 'Lợi nhuận',
   ecpm: 'eCPM',
   impressions: 'Impressions',
 };
 
-export function RevenueChart({ data, metric }: { data: TimePoint[]; metric: ChartMetric }) {
+export function RevenueChart({ data, metric, showSpend }: { data: TimePoint[]; metric: ChartMetric; showSpend?: boolean }) {
+  const withSpend = showSpend && metric === 'earnings';
   const fmt = metric === 'impressions' ? num : money;
   const axisFmt = metric === 'impressions' ? compact : (v: number) => `$${compact(v)}`;
   return (
@@ -28,10 +30,15 @@ export function RevenueChart({ data, metric }: { data: TimePoint[]; metric: Char
         <YAxis tickLine={false} axisLine={false} tick={{ fill: 'var(--muted)', fontSize: 12 }}
           tickFormatter={axisFmt} width={56} />
         <Tooltip
-          formatter={(v) => [fmt(Number(v)), LABELS[metric]]}
+          formatter={(v, key) => [fmt(Number(v)), key === 'spend' ? 'Chi phí' : LABELS[metric]]}
           contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}
         />
-        <Area type="monotone" dataKey={metric} stroke="var(--accent)" strokeWidth={2} fill="url(#fill)" />
+        {metric === 'profit' && <ReferenceLine y={0} stroke="var(--muted)" />}
+        <Area type="monotone" dataKey={metric} name={LABELS[metric]} stroke="var(--accent)" strokeWidth={2} fill="url(#fill)" />
+        {withSpend && (
+          <Area type="monotone" dataKey="spend" name="Chi phí" stroke="var(--down)" strokeWidth={2} fill="none" />
+        )}
+        {withSpend && <Legend verticalAlign="top" height={28} iconType="plainline" />}
       </AreaChart>
     </ResponsiveContainer>
   );

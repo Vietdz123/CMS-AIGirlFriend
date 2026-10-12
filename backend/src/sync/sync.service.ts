@@ -4,6 +4,7 @@ import { Cron } from '@nestjs/schedule';
 import { AdmobAccount, Prisma, SyncStatus, SyncTrigger } from '@prisma/client';
 import { OAuth2Client } from 'google-auth-library';
 import { decrypt } from '../common/crypto';
+import { batches, minDate } from '../common/batches';
 import { addDays, toDbDate, todayIn } from '../common/dates';
 import { AdmobApiService, dim, metricInt, ReportRow } from '../admob/admob-api.service';
 import { InventoryService } from '../admob/inventory.service';
@@ -13,7 +14,6 @@ import { PrismaService } from '../prisma/prisma.service';
 const RECENT_DAYS = 3;
 /** Chia khoảng thời gian dài thành nhiều request nhỏ để report không quá lớn. */
 const CHUNK_DAYS = 14;
-const INSERT_BATCH = 5000;
 
 @Injectable()
 export class SyncService implements OnModuleInit {
@@ -168,14 +168,4 @@ function base(accountId: string, r: ReportRow) {
     adRequests: metricInt(r, 'AD_REQUESTS'),
     matchedRequests: metricInt(r, 'MATCHED_REQUESTS'),
   };
-}
-
-function batches<T>(items: T[]): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += INSERT_BATCH) out.push(items.slice(i, i + INSERT_BATCH));
-  return out;
-}
-
-function minDate(a: string, b: string) {
-  return a < b ? a : b;
 }

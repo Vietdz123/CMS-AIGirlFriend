@@ -19,14 +19,23 @@ export interface Metrics {
   showRate: number;
 }
 
+/** Chi phí Facebook Ads: có ở tổng quan, theo ngày, theo app và theo quốc gia. */
+export interface SpendMetrics {
+  spend: number;
+  installs: number;
+  profit: number;
+  roas: number;
+  cpi: number;
+}
+
 export interface Summary {
-  current: Metrics;
-  previous: Metrics;
+  current: Metrics & SpendMetrics;
+  previous: Metrics & SpendMetrics;
   previousRange: { from: string; to: string };
 }
 
-export type TimePoint = Metrics & { date: string };
-export type BreakdownRow = Metrics & { key: string; label: string };
+export type TimePoint = Metrics & SpendMetrics & { date: string };
+export type BreakdownRow = Metrics & Partial<SpendMetrics> & { key: string; label: string };
 export type AppDailyRow = Metrics & { date: string; appId: string; appName: string };
 
 export interface AdmobAccount {
@@ -79,4 +88,35 @@ export interface UserRow {
   active: boolean;
   createdAt: string;
   appIds: string[];
+}
+
+export interface FbAdAccount {
+  id: string;
+  name: string;
+  currencyCode: string;
+  timeZone: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  running: boolean;
+  createdAt: string;
+  _count: { campaigns: number };
+}
+
+/** Tài khoản quảng cáo token xem được (khi kiểm tra token, chưa lưu). */
+export interface FbApiAdAccount {
+  id: string;
+  account_id: string;
+  name: string;
+  currency: string;
+  timezone_name: string;
+}
+
+export interface FbCampaign {
+  id: string;
+  name: string;
+  storeId: string | null;
+  appId: string | null;
+  autoAppId: string | null;
+  totalSpend: number;
+  account: { id: string; name: string };
 }

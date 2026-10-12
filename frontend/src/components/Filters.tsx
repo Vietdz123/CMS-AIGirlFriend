@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
-import { countryName, daysAgo, formatName } from '../format';
+import { countryOptions, daysAgo, formatName } from '../format';
+import { DateRangePicker } from './DateRangePicker';
+import { SearchSelect } from './SearchSelect';
 import type { AppInfo } from '../types';
 
 export interface FilterValues {
@@ -69,18 +71,17 @@ export function Filters({ value, onChange }: { value: FilterValues; onChange: (p
           );
         })}
       </div>
-      <label>
-        Từ <input type="date" value={value.from} max={value.to} onChange={(e) => onChange({ from: e.target.value })} />
-      </label>
-      <label>
-        Đến <input type="date" value={value.to} min={value.from} onChange={(e) => onChange({ to: e.target.value })} />
-      </label>
+      <DateRangePicker from={value.from} to={value.to} onChange={onChange} />
       <Select label="App" value={value.appIds} onChange={(appIds) => onChange({ appIds })}
         options={(apps.data ?? []).map((a) => ({ value: a.id, label: a.name }))} />
       <Select label="Format" value={value.formats} onChange={(formats) => onChange({ formats })}
         options={(options.data?.formats ?? []).map((f) => ({ value: f, label: formatName(f) }))} />
-      <Select label="Quốc gia" value={value.countries} onChange={(countries) => onChange({ countries })}
-        options={(options.data?.countries ?? []).map((c) => ({ value: c, label: `${countryName(c)} (${c})` }))} />
+      <label>
+        Quốc gia
+        <SearchSelect value={value.countries} allLabel="Tất cả" placeholder="Gõ tên hoặc mã nước…" width={240}
+          options={countryOptions(options.data?.countries ?? [])}
+          onChange={(countries) => onChange({ countries })} />
+      </label>
     </div>
   );
 }
