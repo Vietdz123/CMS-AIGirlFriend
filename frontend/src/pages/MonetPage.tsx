@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { api, qs } from '../api';
+import { useAuth } from '../auth';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { filterQuery, useFilters } from '../components/Filters';
 import { MiniChart, ProfitOverviewChart } from '../components/MonetCharts';
@@ -8,11 +10,15 @@ import { UpdateButton } from '../components/UpdateButton';
 import { countryOptions, daysAgo, money, num, ratio } from '../format';
 import type { AppInfo, Summary, TimePoint } from '../types';
 
+/** Giống UNMATCHED ở ReportsService: "app" ảo gom chi phí của chiến dịch chưa ghép được app nào. */
+const UNMATCHED = '__unmatched__';
+
 const usd = (v: number) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const cents = (v: number) => v.toFixed(2);
 
 /** Doanh thu quảng cáo vs chi phí UA theo ngày, cho 1 app hoặc tất cả. */
 export function MonetPage() {
+  const { can } = useAuth();
   const [filters, setFilters] = useFilters();
   const q = qs(filterQuery(filters));
   const apps = useQuery({ queryKey: ['apps'], queryFn: () => api<AppInfo[]>('/admob/apps') });
@@ -29,6 +35,13 @@ export function MonetPage() {
   const data = series.data ?? [];
   const cur = summary.data?.current;
   const selected = filters.appIds[0];
+  // Chỉ admin xem được nhóm chưa ghép app (server chặn với Viewer/Manager); hiện tab khi có số hoặc đang chọn.
+  const [unmatchedSeen, setUnmatchedSeen] = useState(false);
+  const unmatched = summary.data?.unmatchedSpend ?? 0;
+  useEffect(() => {
+    if (unmatched > 0) setUnmatchedSeen(true);
+  }, [unmatched]);
+  const showUnmatchedTab = can('ADMIN') && (unmatchedSeen || selected === UNMATCHED);
 
   return (
     <div className="monet">
@@ -39,7 +52,20 @@ export function MonetPage() {
             {a.name}
           </button>
         ))}
+        {showUnmatchedTab && (
+          <button className={`unmatched ${selected === UNMATCHED ? 'active' : ''}`}
+            title="Chi phí của chiến dịch Facebook / Google Ads chưa ghép được với app AdMob nào"
+            onClick={() => setFilters({ appIds: [UNMATCHED] })}>
+            Chưa ghép app
+          </button>
+        )}
       </div>
+      {selected === UNMATCHED && (
+        <div className="notice info small">
+          Chi phí của các chiến dịch có package không thuộc app AdMob nào (không có doanh thu tương ứng).
+          Ghép chiến dịch với app ở bảng <b>Chiến dịch → App</b> trên trang Google Ads / Facebook Ads.
+        </div>
+      )}
 
       <div className="monet-toolbar">
         <SearchSelect value={filters.countries} allLabel="Country" placeholder="Gõ tên hoặc mã nước…" width={240}
@@ -62,6 +88,13 @@ export function MonetPage() {
               <span>Profit <b className={cur.profit < 0 ? 'neg' : 'pos'}>{money(cur.profit)}</b></span>
               <span>ROAS <b>{cur.spend ? ratio(cur.roas) : '—'}</b></span>
             </div>
+          )}
+          {!selected && unmatched > 0 && cur && (
+            <p className="small muted unmatched-note">
+              Spend gồm <b>{money(unmatched)}</b> chưa ghép app nào ({money(cur.spend - unmatched)} của các app).
+              {' '}
+              <button className="link" onClick={() => setFilters({ appIds: [UNMATCHED] })}>Xem chi tiết</button>
+            </p>
           )}
         </section>
 

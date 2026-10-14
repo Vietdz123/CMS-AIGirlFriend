@@ -32,6 +32,8 @@ export interface Summary {
   current: Metrics & SpendMetrics;
   previous: Metrics & SpendMetrics;
   previousRange: { from: string; to: string };
+  /** Chi phí chưa ghép được app nào (chỉ có khi xem mọi app), đã nằm trong current.spend. */
+  unmatchedSpend?: number;
 }
 
 export type TimePoint = Metrics & SpendMetrics & { date: string };

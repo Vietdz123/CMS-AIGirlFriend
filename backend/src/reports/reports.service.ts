@@ -61,8 +61,21 @@ export class ReportsService {
   async summary(f: ReportFilter) {
     const days = diffDays(f.from, f.to) + 1;
     const prev = { ...f, from: addDays(f.from, -days), to: addDays(f.from, -1) };
-    const [current, previous] = await Promise.all([this.totals(f), this.totals(prev)]);
-    return { current, previous, previousRange: { from: prev.from, to: prev.to } };
+    const [current, previous, unmatched] = await Promise.all([
+      this.totals(f),
+      this.totals(prev),
+      // Xem mọi app: tách riêng phần chi phí chưa ghép app (đã nằm trong current.spend) để hiển thị.
+      f.appIds === null
+        ? this.prisma.$queryRaw<SpendRow[]>`
+            SELECT ${SPEND_SQL} FROM ${SPEND_SOURCE} WHERE ${this.spendWhere({ ...f, appIds: [UNMATCHED] })}`
+        : Promise.resolve(null),
+    ]);
+    return {
+      current,
+      previous,
+      previousRange: { from: prev.from, to: prev.to },
+      unmatchedSpend: unmatched ? Number(unmatched[0]?.spend_micros ?? 0) / 1e6 : 0,
+    };
   }
 
   async timeseries(f: ReportFilter, granularity: Granularity) {
@@ -163,10 +176,17 @@ export class ReportsService {
     return Prisma.join(parts, ' AND ');
   }
 
-  /** Bộ lọc cho chi phí: không có chiều format/ad unit nên chỉ lọc theo ngày, app, quốc gia. */
+  /**
+   * Bộ lọc cho chi phí: không có chiều format/ad unit nên chỉ lọc theo ngày, app, quốc gia.
+   * appIds có thể chứa UNMATCHED = chi phí của chiến dịch chưa ghép được app nào.
+   */
   private spendWhere(f: ReportFilter): Prisma.Sql {
     const parts = [Prisma.sql`date BETWEEN ${f.from}::date AND ${f.to}::date`];
-    if (f.appIds !== null) parts.push(inList('"appId"', f.appIds));
+    if (f.appIds !== null) {
+      const apps = [inList('"appId"', f.appIds.filter((id) => id !== UNMATCHED))];
+      if (f.appIds.includes(UNMATCHED)) apps.push(Prisma.sql`"appId" IS NULL`);
+      parts.push(Prisma.sql`(${Prisma.join(apps, ' OR ')})`);
+    }
     if (f.countries?.length) parts.push(inList('country', f.countries));
     return Prisma.join(parts, ' AND ');
   }
