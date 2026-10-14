@@ -228,3 +228,5 @@ legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
 .table-search { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .table-search input { width: 280px; }
 .table-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+tr.total-row td { background: #fafbfc; border-top: 1px solid var(--border); }

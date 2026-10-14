@@ -176,13 +176,20 @@ model FbCampaign {
 }
 
 /// Chi phí quảng cáo: 1 dòng = 1 ngày x 1 chiến dịch x 1 quốc gia (ngày theo múi giờ tài khoản quảng cáo).
+/// source = "facebook": accountId/campaignId trỏ tới FbAdAccount/FbCampaign;
+/// source = "google": trỏ tới GadsAccount/GadsCampaign.
 model AdSpendStat {
   id          BigInt   @id @default(autoincrement())
+  source      String   @default("facebook")
   accountId   String
   date        DateTime @db.Date
   campaignId  String
   country     String
+  /// Chi phí đã quy đổi sang USD theo tỷ giá ngày đó (dùng cho mọi báo cáo).
   spendMicros BigInt
+  /// Chi phí gốc theo tiền tệ của tài khoản quảng cáo.
+  localSpendMicros BigInt @default(0)
+  currency         String @default("USD")
   impressions BigInt
   clicks      BigInt
   installs    BigInt
@@ -190,4 +197,41 @@ model AdSpendStat {
   @@index([accountId, date])
   @@index([campaignId, date])
   @@index([date])
+}
+
+/// Tài khoản Google Ads (tài khoản quảng cáo, không phải MCC). Refresh token OAuth mã hoá AES-256-GCM.
+model GadsAccount {
+  id              String         @id // customer id 10 chữ số, không có dấu gạch
+  loginCustomerId String // MCC dùng để truy cập, hoặc chính id nếu truy cập trực tiếp
+  name            String
+  currencyCode    String
+  timeZone        String
+  refreshTokenEnc String
+  lastSyncedAt    DateTime?
+  lastError       String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  campaigns       GadsCampaign[]
+}
+
+/// Chiến dịch Google Ads. Ghép app giống FbCampaign: storeId (package của App campaign) hoặc appId gán tay.
+model GadsCampaign {
+  id        String      @id
+  accountId String
+  account   GadsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name      String
+  storeId   String?
+  appId     String?
+  updatedAt DateTime    @updatedAt
+
+  @@index([accountId])
+}
+
+/// Tỷ giá theo ngày: 1 USD = rate đơn vị currency. Lấy tự động, cache để không gọi lại.
+model FxRate {
+  date     DateTime @db.Date
+  currency String
+  rate     Float
+
+  @@id([date, currency])
 }

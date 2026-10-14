@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FormEvent, useState } from 'react';
-import { api, del, patch, post } from '../api';
+import { api, del, post } from '../api';
 import { useAuth } from '../auth';
-import { dateTime, money, relative } from '../format';
-import type { AppInfo, FbAdAccount, FbApiAdAccount, FbCampaign } from '../types';
+import { CampaignTable } from '../components/CampaignTable';
+import { dateTime, relative } from '../format';
+import type { FbAdAccount, FbApiAdAccount } from '../types';
 
 export function FacebookPage() {
   const { can } = useAuth();
@@ -61,11 +62,7 @@ export function FacebookPage() {
                 <td className="muted">{a.id}</td>
                 <td>
                   {a.currencyCode}
-                  {a.currencyCode !== 'USD' && (
-                    <span className="badge error" title="CMS cộng thẳng chi phí với doanh thu USD, chưa quy đổi tỷ giá">
-                      {' '}chưa quy đổi
-                    </span>
-                  )}
+                  {a.currencyCode !== 'USD' && <span className="muted small"> → USD</span>}
                 </td>
                 <td>{a.timeZone}</td>
                 <td className="num">{a._count.campaigns}</td>
@@ -97,61 +94,15 @@ export function FacebookPage() {
         </p>
       )}
 
-      {can('ADMIN') && !!accounts.data?.length && <Campaigns />}
+      {!!accounts.data?.length && (
+        <CampaignTable apiBase="/facebook"
+          currency={new Set(accounts.data.map((a) => a.currencyCode)).size === 1 ? accounts.data[0].currencyCode : undefined} />
+      )}
       {connecting && <ConnectModal onClose={() => setConnecting(false)} />}
     </>
   );
 }
 
-/** Ghép chiến dịch với app AdMob: tự động theo package name, hoặc chọn tay. */
-function Campaigns() {
-  const queryClient = useQueryClient();
-  const campaigns = useQuery({ queryKey: ['fb-campaigns'], queryFn: () => api<FbCampaign[]>('/facebook/campaigns') });
-  const apps = useQuery({ queryKey: ['apps'], queryFn: () => api<AppInfo[]>('/admob/apps') });
-  const appName = (id: string | null) => (id ? apps.data?.find((a) => a.id === id)?.name ?? id : null);
-  const setApp = useMutation({
-    mutationFn: ({ id, appId }: { id: string; appId: string }) => patch(`/facebook/campaigns/${id}`, { appId }),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-  const rows = [...(campaigns.data ?? [])].sort((a, b) => b.totalSpend - a.totalSpend);
-
-  return (
-    <>
-      <h2>Chiến dịch → App</h2>
-      <p className="small muted">
-        Chiến dịch quảng bá app được ghép tự động theo package name. Chiến dịch không ghép được thì chọn app bằng tay,
-        nếu không chi phí sẽ nằm ở dòng "Chưa ghép app".
-      </p>
-      <div className="card table-card">
-        <table>
-          <thead>
-            <tr><th>Chiến dịch</th><th>Package</th><th className="num">Tổng chi phí</th><th>App</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((c) => (
-              <tr key={c.id}>
-                <td className="label-cell" title={c.id}>{c.name}</td>
-                <td className="muted">{c.storeId ?? '—'}</td>
-                <td className="num">{money(c.totalSpend)}</td>
-                <td>
-                  <select value={c.appId ?? ''} onChange={(e) => setApp.mutate({ id: c.id, appId: e.target.value })}>
-                    <option value="">
-                      {c.autoAppId ? `Tự động: ${appName(c.autoAppId)}` : 'Chưa ghép app'}
-                    </option>
-                    {apps.data?.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={4} className="center muted">Chưa có chiến dịch nào. Đợi đồng bộ xong rồi tải lại trang.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
 
 function ConnectModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();

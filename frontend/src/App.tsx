@@ -6,6 +6,7 @@ import { AppsPage } from './pages/AppsPage';
 import { BreakdownPage } from './pages/BreakdownPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { FacebookPage } from './pages/FacebookPage';
+import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { LoginPage } from './pages/LoginPage';
 import { MonetPage } from './pages/MonetPage';
 import { SyncHistoryPage } from './pages/SyncHistoryPage';
@@ -25,6 +26,7 @@ export function App() {
         <Route path="apps" element={<AppsPage />} />
         <Route path="accounts" element={<AccountsPage />} />
         <Route path="facebook" element={<FacebookPage />} />
+        <Route path="google-ads" element={<GoogleAdsPage />} />
         <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         <Route path="sync-history" element={<AdminOnly><SyncHistoryPage /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -51,6 +53,7 @@ function Layout() {
           <NavLink to="/apps">Ứng dụng</NavLink>
           <NavLink to="/accounts">Tài khoản AdMob</NavLink>
           <NavLink to="/facebook">Facebook Ads</NavLink>
+          <NavLink to="/google-ads">Google Ads</NavLink>
           {can('ADMIN') && <NavLink to="/users">Người dùng</NavLink>}
           {can('ADMIN') && <NavLink to="/sync-history">Lịch sử đồng bộ</NavLink>}
         </nav>

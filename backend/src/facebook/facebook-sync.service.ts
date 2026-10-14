@@ -4,6 +4,7 @@ import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { batches, minDate } from '../common/batches';
 import { decrypt } from '../common/crypto';
+import { FxService } from '../common/fx.service';
 import { addDays, toDbDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { FacebookApiService } from './facebook-api.service';
@@ -21,6 +22,7 @@ export class FacebookSyncService {
     private prisma: PrismaService,
     private api: FacebookApiService,
     private config: ConfigService,
+    private fx: FxService,
   ) {}
 
   isRunning(accountId: string) {
@@ -33,11 +35,18 @@ export class FacebookSyncService {
     this.start(accountId, days).catch(() => undefined);
   }
 
-  /** Nút "Update": sync lại các ngày gần nhất cho mọi tài khoản, chạy nền, trả về ngay. */
+  /**
+   * Nút "Update": sync lại các ngày gần nhất cho mọi tài khoản, chạy nền, trả về ngay.
+   * Tài khoản chưa có dữ liệu (lần đầu bị lỗi, hoặc dữ liệu bị xoá để quy đổi lại) thì backfill BACKFILL_DAYS ngày.
+   */
   async startManual() {
     const accounts = await this.prisma.fbAdAccount.findMany({ select: { id: true } });
+    const withData = new Set(
+      (await this.prisma.adSpendStat.groupBy({ by: ['accountId'], where: { source: 'facebook' } })).map((r) => r.accountId),
+    );
+    const backfillDays = Number(this.config.get('BACKFILL_DAYS', 90));
     const started = accounts.map((a) => a.id).filter((id) => !this.running.has(id));
-    started.forEach((id) => this.start(id, RECENT_DAYS).catch(() => undefined));
+    started.forEach((id) => this.start(id, withData.has(id) ? RECENT_DAYS : backfillDays).catch(() => undefined));
     if (!started.length && accounts.length) throw new ConflictException('Đang cập nhật, vui lòng chờ');
     return started;
   }
@@ -85,6 +94,7 @@ export class FacebookSyncService {
       for (let chunkFrom = from; chunkFrom <= to; chunkFrom = addDays(chunkFrom, CHUNK_DAYS)) {
         const chunkTo = minDate(addDays(chunkFrom, CHUNK_DAYS - 1), to);
         const rows = await this.api.insights(token, accountId, chunkFrom, chunkTo);
+        const toUsd = await this.fx.converter(account.currencyCode, chunkFrom, chunkTo);
 
         // Chiến dịch đã xoá/lưu trữ không có trong danh sách campaigns nhưng vẫn có chi phí cũ.
         for (const r of rows) {
@@ -102,14 +112,16 @@ export class FacebookSyncService {
           date: toDbDate(r.date),
           campaignId: r.campaignId,
           country: r.country,
-          spendMicros: r.spendMicros,
+          spendMicros: toUsd(r.date, r.spendMicros),
+          localSpendMicros: r.spendMicros,
+          currency: account.currencyCode,
           impressions: r.impressions,
           clicks: r.clicks,
           installs: r.installs,
         }));
         await this.prisma.$transaction([
           this.prisma.adSpendStat.deleteMany({
-            where: { accountId, date: { gte: toDbDate(chunkFrom), lte: toDbDate(chunkTo) } },
+            where: { source: 'facebook', accountId, date: { gte: toDbDate(chunkFrom), lte: toDbDate(chunkTo) } },
           }),
           ...batches(data).map((d) => this.prisma.adSpendStat.createMany({ data: d })),
         ]);

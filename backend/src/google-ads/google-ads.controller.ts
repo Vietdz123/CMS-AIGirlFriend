@@ -1,0 +1,98 @@
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { IsOptional, IsString } from 'class-validator';
+import { AppAccessService } from '../auth/app-access.service';
+import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
+import { allowedAdAccountIds, campaignPackages, listCampaigns } from '../common/ad-campaigns';
+import { isIsoDate } from '../common/dates';
+import { PrismaService } from '../prisma/prisma.service';
+import { GOOGLE_SOURCE, GoogleAdsSyncService } from './google-ads-sync.service';
+import { GoogleAdsService } from './google-ads.service';
+
+class CampaignAppDto {
+  @IsOptional()
+  @IsString()
+  appId?: string | null;
+}
+
+@Controller('google-ads')
+export class GoogleAdsController {
+  constructor(
+    private prisma: PrismaService,
+    private ads: GoogleAdsService,
+    private sync: GoogleAdsSyncService,
+    private access: AppAccessService,
+  ) {}
+
+  /** Link đăng nhập Google; callback dùng chung /api/admob/oauth/callback. */
+  @Roles(Role.ADMIN)
+  @Get('oauth/url')
+  async oauthUrl(@CurrentUser() user: AuthUser) {
+    return { url: await this.ads.authUrl(user.id) };
+  }
+
+  @Get('accounts')
+  async accounts(@CurrentUser() user: AuthUser) {
+    const allowed = await allowedAdAccountIds(this.prisma, 'google', await this.access.allowedAppIds(user));
+    const accounts = await this.prisma.gadsAccount.findMany({
+      where: allowed === null ? {} : { id: { in: allowed } },
+      select: {
+        id: true,
+        name: true,
+        currencyCode: true,
+        timeZone: true,
+        lastSyncedAt: true,
+        lastError: true,
+        createdAt: true,
+        _count: { select: { campaigns: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return accounts.map((a) => ({ ...a, running: this.sync.isRunning(a.id) }));
+  }
+
+  @Roles(Role.ADMIN)
+  @Delete('accounts/:id')
+  async remove(@Param('id') id: string) {
+    await this.prisma.$transaction([
+      this.prisma.adSpendStat.deleteMany({ where: { source: GOOGLE_SOURCE, accountId: id } }),
+      this.prisma.gadsAccount.delete({ where: { id } }),
+    ]);
+    return { ok: true };
+  }
+
+  @Roles(Role.ADMIN, Role.MANAGER)
+  @Post('sync')
+  async trigger() {
+    return { started: await this.sync.startManual() };
+  }
+
+  /**
+   * Chiến dịch kèm app được ghép và chi phí trong khoảng ngày. Query: from, to (YYYY-MM-DD), storeIds (phân tách
+   * bằng dấu phẩy). Người không phải admin chỉ thấy chiến dịch ghép với app được gán.
+   */
+  @Get('campaigns')
+  async campaigns(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
+    if ((q.from && !isIsoDate(q.from)) || (q.to && !isIsoDate(q.to))) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD');
+    }
+    return listCampaigns(this.prisma, 'google', {
+      from: q.from,
+      to: q.to,
+      storeIds: q.storeIds?.split(',').filter(Boolean),
+      allowedAppIds: await this.access.allowedAppIds(user),
+    });
+  }
+
+  @Get('packages')
+  async packages(@CurrentUser() user: AuthUser) {
+    return campaignPackages(this.prisma, 'google', await this.access.allowedAppIds(user));
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('campaigns/:id')
+  async setCampaignApp(@Param('id') id: string, @Body() dto: CampaignAppDto) {
+    await this.prisma.gadsCampaign.update({ where: { id }, data: { appId: dto.appId || null } });
+    return { ok: true };
+  }
+}

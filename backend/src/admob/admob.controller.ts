@@ -3,6 +3,8 @@ import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Public, Roles } from '../auth/decorators';
+import { GoogleAdsSyncService } from '../google-ads/google-ads-sync.service';
+import { GADS_OAUTH_PURPOSE, GoogleAdsService } from '../google-ads/google-ads.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncService } from '../sync/sync.service';
 import { AdmobService } from './admob.service';
@@ -14,6 +16,8 @@ export class AdmobController {
     private prisma: PrismaService,
     private access: AppAccessService,
     private sync: SyncService,
+    private gads: GoogleAdsService,
+    private gadsSync: GoogleAdsSyncService,
   ) {}
 
   @Roles(Role.ADMIN)
@@ -32,13 +36,21 @@ export class AdmobController {
     @Res() res: Response,
   ) {
     if (error) return res.redirect(this.admob.frontendUrl(`/accounts?error=${encodeURIComponent(error)}`));
+    let page = '/accounts';
     try {
-      const ids = await this.admob.handleCallback(code, state);
-      // Lần đầu kết nối: backfill dữ liệu lịch sử ở background.
-      ids.forEach((id) => this.sync.startInitial(id));
-      return res.redirect(this.admob.frontendUrl('/accounts?connected=1'));
+      const purpose = await this.admob.verifyState(state);
+      if (purpose === GADS_OAUTH_PURPOSE) {
+        page = '/google-ads';
+        const ids = await this.gads.handleCallback(code);
+        ids.forEach((id) => this.gadsSync.startInitial(id));
+      } else {
+        const ids = await this.admob.handleCallback(code);
+        // Lần đầu kết nối: backfill dữ liệu lịch sử ở background.
+        ids.forEach((id) => this.sync.startInitial(id));
+      }
+      return res.redirect(this.admob.frontendUrl(`${page}?connected=1`));
     } catch (e: any) {
-      return res.redirect(this.admob.frontendUrl(`/accounts?error=${encodeURIComponent(e.message)}`));
+      return res.redirect(this.admob.frontendUrl(`${page}?error=${encodeURIComponent(e.message)}`));
     }
   }
 

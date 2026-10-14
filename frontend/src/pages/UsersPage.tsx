@@ -102,8 +102,9 @@ function UserDialog({ user, apps, isSelf, onClose, onSaved }: {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="card modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
+    // Không đóng khi bấm ra ngoài để không mất dữ liệu đang nhập; chỉ đóng bằng nút Huỷ.
+    <div className="modal-backdrop">
+      <form className="card modal" onSubmit={submit}>
         <h2>{user ? 'Sửa người dùng' : 'Thêm người dùng'}</h2>
         <label>Tên<input value={name} onChange={(e) => setName(e.target.value)} required /></label>
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={!!user} /></label>

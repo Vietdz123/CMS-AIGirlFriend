@@ -35,6 +35,15 @@ CMS theo dõi doanh thu AdMob cho app Android: **NestJS + Prisma + PostgreSQL** 
      (khi deploy thêm `https://<domain-backend>/api/admob/oauth/callback`).
    - Copy **Client ID** và **Client secret** vào `backend/.env`.
 
+## 1b. Kết nối Google Ads (chi phí UAC)
+
+1. Trong cùng project Google Cloud: bật **Google Ads API** (<https://console.cloud.google.com/flows/enableapi?apiid=googleads.googleapis.com>), rồi vào <https://console.cloud.google.com/google/ads-apis/overview> xin **Explorer** access (2.880 lệnh/ngày, đủ dùng). Không cần developer token.
+2. OAuth consent screen: thêm scope `https://www.googleapis.com/auth/adwords`; Gmail quản lý tài khoản Ads phải có trong **Test users**.
+3. Trong CMS: **Google Ads → + Kết nối Google Ads**, đăng nhập Gmail đó. Mọi tài khoản quảng cáo Gmail đó xem được (kể cả tài khoản con dưới MCC) sẽ được thêm và tải 90 ngày chi phí.
+4. App campaign (UAC) tự ghép với app AdMob theo package name; chiến dịch khác chọn app bằng tay ở bảng **Chiến dịch → App**.
+
+Chi phí Google cộng chung với chi phí Facebook vào Spend, Profit, ROAS, CPI. Install = cột *Installs* (biddable app install conversions) của Google Ads.
+
 ## 2. Chạy local
 
 Yêu cầu: Node.js ≥ 20, Docker (hoặc PostgreSQL có sẵn).

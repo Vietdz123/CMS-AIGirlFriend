@@ -27,7 +27,7 @@ const COLUMNS: { key: SortKey; label: string; render: (m: Row) => string }[] = [
 export function MetricsTable({ rows, title, hideRequests, showSpend, onRowClick }: {
   rows: Row[];
   title: string;
-  /** Thêm cột chi phí Facebook (chỉ có khi xem theo app / quốc gia). */
+  /** Thêm cột chi phí quảng cáo Facebook + Google Ads (chỉ có khi xem theo app / quốc gia). */
   showSpend?: boolean;
   /** Ad source report: request là request waterfall nên match/show rate không có nghĩa so sánh. */
   hideRequests?: boolean;

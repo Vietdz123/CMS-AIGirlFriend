@@ -27,15 +27,19 @@ export class AdmobService {
     });
   }
 
-  /** Xử lý callback OAuth: lưu (các) tài khoản AdMob, trả về danh sách account id vừa kết nối. */
-  async handleCallback(code: string, state: string): Promise<string[]> {
+  /** Purpose trong state OAuth ('admob-oauth' | 'gads-oauth'): AdMob và Google Ads dùng chung 1 redirect URI. */
+  async verifyState(state: string): Promise<string> {
     try {
       const payload = await this.jwt.verifyAsync(state);
-      if (payload.purpose !== 'admob-oauth') throw new Error();
+      if (typeof payload.purpose !== 'string') throw new Error();
+      return payload.purpose;
     } catch {
       throw new BadRequestException('OAuth state không hợp lệ hoặc đã hết hạn');
     }
+  }
 
+  /** Xử lý callback OAuth: lưu (các) tài khoản AdMob, trả về danh sách account id vừa kết nối. */
+  async handleCallback(code: string): Promise<string[]> {
     const client = this.api.oauthClient();
     const { tokens } = await client.getToken(code);
     if (!tokens.refresh_token) {

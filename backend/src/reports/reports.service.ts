@@ -29,13 +29,18 @@ interface SpendRow {
 }
 
 /**
- * Chi phí Facebook kèm app được ghép: app gán tay trên chiến dịch, nếu không có thì app AdMob
- * có cùng package name. Chiến dịch không ghép được có appId NULL (chỉ hiện khi không lọc theo app).
+ * Chi phí quảng cáo (Facebook + Google Ads) kèm app được ghép: app gán tay trên chiến dịch, nếu không có
+ * thì app AdMob có cùng package name. Chiến dịch không ghép được có appId NULL (chỉ hiện khi không lọc theo app).
  */
 const SPEND_SOURCE = Prisma.sql`(
   SELECT s.date, s.country, s."spendMicros", s.installs,
     COALESCE(c."appId", (SELECT MIN(a.id) FROM "App" a WHERE a."storeId" = c."storeId")) AS "appId"
-  FROM "AdSpendStat" s JOIN "FbCampaign" c ON c.id = s."campaignId"
+  FROM "AdSpendStat" s
+  JOIN (
+    SELECT 'facebook' AS source, id, "appId", "storeId" FROM "FbCampaign"
+    UNION ALL
+    SELECT 'google' AS source, id, "appId", "storeId" FROM "GadsCampaign"
+  ) c ON c.source = s.source AND c.id = s."campaignId"
 ) sp`;
 
 const SPEND_SQL = Prisma.sql`
@@ -111,7 +116,7 @@ export class ReportsService {
       GROUP BY 1`;
     const merged = mergeBy(rows, spendRows, (r) => r.key);
     const labels = await this.labels(dimension, merged.map(([key]) => key));
-    labels.set(UNMATCHED, 'Chưa ghép app (Facebook)');
+    labels.set(UNMATCHED, 'Chưa ghép app (quảng cáo)');
     return merged
       .map(([key, r, sp]) => ({ key, label: labels.get(key) ?? key, ...withSpend(metrics(r), sp) }))
       .sort((a, b) => b.earnings - a.earnings || b.spend - a.spend);

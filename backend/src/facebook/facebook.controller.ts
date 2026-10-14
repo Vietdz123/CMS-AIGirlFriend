@@ -1,8 +1,11 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { ArrayNotEmpty, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
-import { Roles } from '../auth/decorators';
+import { AppAccessService } from '../auth/app-access.service';
+import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
+import { allowedAdAccountIds, campaignPackages, listCampaigns } from '../common/ad-campaigns';
 import { encrypt } from '../common/crypto';
+import { isIsoDate } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { FacebookApiService } from './facebook-api.service';
 import { FacebookSyncService } from './facebook-sync.service';
@@ -32,6 +35,7 @@ export class FacebookController {
     private prisma: PrismaService,
     private api: FacebookApiService,
     private sync: FacebookSyncService,
+    private access: AppAccessService,
   ) {}
 
   /** Kiểm tra token và liệt kê các tài khoản quảng cáo token xem được. Token không được lưu ở bước này. */
@@ -67,8 +71,10 @@ export class FacebookController {
   }
 
   @Get('accounts')
-  async accounts() {
+  async accounts(@CurrentUser() user: AuthUser) {
+    const allowed = await allowedAdAccountIds(this.prisma, 'facebook', await this.access.allowedAppIds(user));
     const accounts = await this.prisma.fbAdAccount.findMany({
+      where: allowed === null ? {} : { id: { in: allowed } },
       select: {
         id: true,
         name: true,
@@ -88,7 +94,7 @@ export class FacebookController {
   @Delete('accounts/:id')
   async remove(@Param('id') id: string) {
     await this.prisma.$transaction([
-      this.prisma.adSpendStat.deleteMany({ where: { accountId: id } }),
+      this.prisma.adSpendStat.deleteMany({ where: { source: 'facebook', accountId: id } }),
       this.prisma.fbAdAccount.delete({ where: { id } }),
     ]);
     return { ok: true };
@@ -100,29 +106,26 @@ export class FacebookController {
     return { started: await this.sync.startManual() };
   }
 
-  /** Danh sách chiến dịch kèm app được ghép (tự động theo package name, hoặc gán tay). */
-  @Roles(Role.ADMIN)
+  /**
+   * Chiến dịch kèm app được ghép và chi phí trong khoảng ngày. Query: from, to (YYYY-MM-DD), storeIds (phân tách
+   * bằng dấu phẩy). Người không phải admin chỉ thấy chiến dịch ghép với app được gán.
+   */
   @Get('campaigns')
-  async campaigns() {
-    const [campaigns, apps, spend] = await Promise.all([
-      this.prisma.fbCampaign.findMany({
-        select: { id: true, name: true, storeId: true, appId: true, account: { select: { id: true, name: true } } },
-        orderBy: { name: 'asc' },
-      }),
-      this.prisma.app.findMany({ where: { storeId: { not: null } }, select: { id: true, storeId: true } }),
-      this.prisma.adSpendStat.groupBy({ by: ['campaignId'], _sum: { spendMicros: true } }),
-    ]);
-    const appByStore = new Map<string, string>();
-    // Cùng quy tắc với ReportsService: nhiều app trùng package thì lấy app có id nhỏ nhất.
-    for (const a of [...apps].sort((x, y) => x.id.localeCompare(y.id))) {
-      if (!appByStore.has(a.storeId!)) appByStore.set(a.storeId!, a.id);
+  async campaigns(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
+    if ((q.from && !isIsoDate(q.from)) || (q.to && !isIsoDate(q.to))) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD');
     }
-    const spendBy = new Map(spend.map((s) => [s.campaignId, Number(s._sum.spendMicros ?? 0) / 1e6]));
-    return campaigns.map((c) => ({
-      ...c,
-      autoAppId: c.storeId ? appByStore.get(c.storeId) ?? null : null,
-      totalSpend: spendBy.get(c.id) ?? 0,
-    }));
+    return listCampaigns(this.prisma, 'facebook', {
+      from: q.from,
+      to: q.to,
+      storeIds: q.storeIds?.split(',').filter(Boolean),
+      allowedAppIds: await this.access.allowedAppIds(user),
+    });
+  }
+
+  @Get('packages')
+  async packages(@CurrentUser() user: AuthUser) {
+    return campaignPackages(this.prisma, 'facebook', await this.access.allowedAppIds(user));
   }
 
   @Roles(Role.ADMIN)

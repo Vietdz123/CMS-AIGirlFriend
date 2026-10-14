@@ -47,7 +47,7 @@ export function DashboardPage() {
       </section>
       {hasSpend && (
         <section className="kpis">
-          <Kpi label="Chi phí Facebook" field="spend" cur={cur} prev={prev} fmt={money} invert />
+          <Kpi label="Chi phí quảng cáo" field="spend" cur={cur} prev={prev} fmt={money} invert />
           <Kpi label="Lợi nhuận" field="profit" cur={cur} prev={prev} fmt={money} />
           <Kpi label="ROAS" field="roas" cur={cur} prev={prev} fmt={ratio} />
           <Kpi label="Installs" field="installs" cur={cur} prev={prev} fmt={num} />

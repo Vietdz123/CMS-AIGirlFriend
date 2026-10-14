@@ -6,7 +6,7 @@ import { relative } from '../format';
 import type { SyncStatus } from '../types';
 
 /**
- * Nút "Update": lấy số liệu mới nhất từ AdMob API và chi phí Facebook Ads. Trong lúc sync chạy, poll trạng thái
+ * Nút "Update": lấy số liệu mới nhất từ AdMob API và chi phí Facebook Ads + Google Ads. Trong lúc sync chạy, poll trạng thái
  * mỗi 2s; khi xong thì invalidate mọi query report để dashboard tự cập nhật.
  */
 export function UpdateButton() {
@@ -54,7 +54,7 @@ export function UpdateButton() {
   return (
     <div className="update-box">
       <div className="small muted">
-        {running ? 'Đang lấy dữ liệu AdMob & Facebook…' : `Cập nhật lần cuối: ${relative(lastSynced ?? null)}`}
+        {running ? 'Đang lấy dữ liệu AdMob, Facebook & Google Ads…' : `Cập nhật lần cuối: ${relative(lastSynced ?? null)}`}
         {failed.length > 0 && !running && (
           <span className="error-text" title={failed.map((f) => `${f.publisherId}: ${f.lastRun?.error}`).join('\n')}>
             {' '}· {failed.length} tài khoản lỗi

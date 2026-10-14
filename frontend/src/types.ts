@@ -117,6 +117,25 @@ export interface FbCampaign {
   storeId: string | null;
   appId: string | null;
   autoAppId: string | null;
+  /** Chi phí trong khoảng ngày đang lọc, đã quy đổi USD. */
   totalSpend: number;
+  /** Chi phí theo tiền tệ gốc của tài khoản quảng cáo. */
+  localSpend: number;
+  installs: number;
   account: { id: string; name: string };
 }
+
+export interface GadsAccount {
+  id: string; // customer id 10 chữ số
+  name: string;
+  currencyCode: string;
+  timeZone: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  running: boolean;
+  createdAt: string;
+  _count: { campaigns: number };
+}
+
+/** Cùng dạng với FbCampaign: ghép chiến dịch với app AdMob. */
+export type GadsCampaign = FbCampaign;
