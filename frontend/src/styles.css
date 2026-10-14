@@ -230,3 +230,7 @@ legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
 .table-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
 tr.total-row td { background: #fafbfc; border-top: 1px solid var(--border); }
+tr.detail-row > td { background: #f6f8fb; padding: 8px 14px 14px 32px; }
+tr.detail-row:hover td { background: #f6f8fb; }
+.daily-table { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.daily-table th, .daily-table td { padding: 6px 12px; font-size: 13px; }

@@ -1,9 +1,9 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { IsOptional, IsString } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
-import { allowedAdAccountIds, campaignPackages, listCampaigns } from '../common/ad-campaigns';
+import { allowedAdAccountIds, campaignDaily, campaignPackages, listCampaigns } from '../common/ad-campaigns';
 import { isIsoDate } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { GOOGLE_SOURCE, GoogleAdsSyncService } from './google-ads-sync.service';
@@ -63,8 +63,10 @@ export class GoogleAdsController {
 
   @Roles(Role.ADMIN, Role.MANAGER)
   @Post('sync')
-  async trigger() {
-    return { started: await this.sync.startManual() };
+  async trigger(@CurrentUser() user: AuthUser, @Body() body: { full?: boolean }) {
+    // Tải lại toàn bộ lịch sử tốn nhiều lượt gọi API (quota Explorer 2.880/ngày) nên chỉ admin được dùng.
+    if (body?.full && user.role !== Role.ADMIN) throw new ForbiddenException('Chỉ admin được tải lại toàn bộ');
+    return { started: await this.sync.startManual(!!body?.full) };
   }
 
   /**
@@ -82,6 +84,21 @@ export class GoogleAdsController {
       storeIds: q.storeIds?.split(',').filter(Boolean),
       allowedAppIds: await this.access.allowedAppIds(user),
     });
+  }
+
+  /** Số liệu từng ngày của 1 chiến dịch: spend, installs, CPI, conversion value, ROAS (Google). */
+  @Get('campaigns/:id/daily')
+  async daily(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query() q: Record<string, string | undefined>) {
+    if (!isIsoDate(q.from) || !isIsoDate(q.to) || q.from > q.to) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD và from <= to');
+    }
+    // Người không phải admin chỉ xem được chiến dịch ghép với app được gán.
+    const allowed = await this.access.allowedAppIds(user);
+    if (allowed !== null) {
+      const visible = await listCampaigns(this.prisma, 'google', { allowedAppIds: allowed });
+      if (!visible.some((c) => c.id === id)) throw new ForbiddenException('Không có quyền xem chiến dịch này');
+    }
+    return campaignDaily(this.prisma, 'google', id, q.from, q.to);
   }
 
   @Get('packages')

@@ -42,15 +42,16 @@ export class GoogleAdsSyncService {
   /**
    * Nút "Update": sync lại các ngày gần nhất cho mọi tài khoản, chạy nền, trả về ngay.
    * Tài khoản chưa có dữ liệu (ví dụ backfill lần đầu bị lỗi) thì backfill lại BACKFILL_DAYS ngày.
+   * full = true: tải lại BACKFILL_DAYS ngày cho mọi tài khoản (ghi đè dữ liệu cũ của khoảng đó, không xoá trước).
    */
-  async startManual() {
+  async startManual(full = false) {
     const accounts = await this.prisma.gadsAccount.findMany({ select: { id: true } });
     const withData = new Set(
       (await this.prisma.adSpendStat.groupBy({ by: ['accountId'], where: { source: GOOGLE_SOURCE } })).map((r) => r.accountId),
     );
     const backfillDays = Number(this.config.get('BACKFILL_DAYS', 90));
     const started = accounts.map((a) => a.id).filter((id) => !this.running.has(id));
-    started.forEach((id) => this.start(id, withData.has(id) ? RECENT_DAYS : backfillDays).catch(() => undefined));
+    started.forEach((id) => this.start(id, !full && withData.has(id) ? RECENT_DAYS : backfillDays).catch(() => undefined));
     if (!started.length && accounts.length) throw new ConflictException('Đang cập nhật, vui lòng chờ');
     return started;
   }
@@ -123,6 +124,8 @@ export class GoogleAdsSyncService {
           impressions: r.impressions,
           clicks: r.clicks,
           installs: r.installs,
+          convValueMicros: toUsd(r.date, r.convValueMicros),
+          localConvValueMicros: r.convValueMicros,
         }));
         await this.prisma.$transaction([
           this.prisma.adSpendStat.deleteMany({

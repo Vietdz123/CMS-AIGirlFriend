@@ -21,6 +21,7 @@ interface CampaignRow {
   spend_micros: bigint | null;
   local_spend_micros: bigint | null;
   installs: bigint | null;
+  conv_value_micros: bigint | null;
 }
 
 const TABLES = {
@@ -51,14 +52,15 @@ export async function listCampaigns(prisma: PrismaService, source: 'facebook' | 
   const rows = await prisma.$queryRaw<CampaignRow[]>`
     SELECT c.id, c.name, c."storeId", c."appId", auto.id AS auto_app_id,
            acc.id AS account_id, acc.name AS account_name,
-           sp.spend_micros, sp.local_spend_micros, sp.installs
+           sp.spend_micros, sp.local_spend_micros, sp.installs, sp.conv_value_micros
     FROM ${t.campaign} c
     JOIN ${t.account} acc ON acc.id = c."accountId"
     LEFT JOIN LATERAL (SELECT MIN(a.id) AS id FROM "App" a WHERE a."storeId" = c."storeId") auto ON TRUE
     LEFT JOIN LATERAL (
       SELECT SUM(s."spendMicros")::bigint AS spend_micros,
              SUM(s."localSpendMicros")::bigint AS local_spend_micros,
-             SUM(s.installs)::bigint AS installs
+             SUM(s.installs)::bigint AS installs,
+             SUM(s."convValueMicros")::bigint AS conv_value_micros
       FROM "AdSpendStat" s WHERE ${Prisma.join(spendFilter, ' AND ')}
     ) sp ON TRUE
     WHERE ${Prisma.join(where, ' AND ')}
@@ -74,6 +76,8 @@ export async function listCampaigns(prisma: PrismaService, source: 'facebook' | 
     totalSpend: Number(r.spend_micros ?? 0) / 1e6,
     localSpend: Number(r.local_spend_micros ?? 0) / 1e6,
     installs: Number(r.installs ?? 0),
+    /** Conversion value nền tảng báo (USD); Facebook hiện luôn 0. */
+    convValue: Number(r.conv_value_micros ?? 0) / 1e6,
   }));
 }
 
@@ -92,4 +96,44 @@ export async function allowedAdAccountIds(
   if (allowedAppIds === null) return null;
   const rows = await listCampaigns(prisma, source, { allowedAppIds });
   return [...new Set(rows.map((r) => r.account.id))];
+}
+
+/** Số liệu từng ngày của 1 chiến dịch (cộng mọi quốc gia), USD. */
+export async function campaignDaily(prisma: PrismaService, source: 'facebook' | 'google', campaignId: string, from: string, to: string) {
+  const rows = await prisma.$queryRaw<{
+    date: Date;
+    spend_micros: bigint;
+    local_spend_micros: bigint;
+    impressions: bigint;
+    clicks: bigint;
+    installs: bigint;
+    conv_value_micros: bigint;
+  }[]>`
+    SELECT date,
+           SUM("spendMicros")::bigint AS spend_micros,
+           SUM("localSpendMicros")::bigint AS local_spend_micros,
+           SUM(impressions)::bigint AS impressions,
+           SUM(clicks)::bigint AS clicks,
+           SUM(installs)::bigint AS installs,
+           SUM("convValueMicros")::bigint AS conv_value_micros
+    FROM "AdSpendStat"
+    WHERE source = ${source} AND "campaignId" = ${campaignId}
+      AND date BETWEEN ${from}::date AND ${to}::date
+    GROUP BY date ORDER BY date DESC`;
+  return rows.map((r) => {
+    const spend = Number(r.spend_micros) / 1e6;
+    const installs = Number(r.installs);
+    const convValue = Number(r.conv_value_micros) / 1e6;
+    return {
+      date: r.date.toISOString().slice(0, 10),
+      spend,
+      localSpend: Number(r.local_spend_micros) / 1e6,
+      impressions: Number(r.impressions),
+      clicks: Number(r.clicks),
+      installs,
+      cpi: installs ? spend / installs : null,
+      convValue,
+      roas: spend ? convValue / spend : null,
+    };
+  });
 }

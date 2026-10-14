@@ -190,6 +190,10 @@ model AdSpendStat {
   /// Chi phí gốc theo tiền tệ của tài khoản quảng cáo.
   localSpendMicros BigInt @default(0)
   currency         String @default("USD")
+  /// Conversion value do nền tảng quảng cáo báo (Google Ads: metrics.conversions_value), đã quy đổi USD.
+  convValueMicros      BigInt @default(0)
+  /// Conversion value theo tiền tệ gốc.
+  localConvValueMicros BigInt @default(0)
   impressions BigInt
   clicks      BigInt
   installs    BigInt

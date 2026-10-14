@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "AdSpendStat" ADD COLUMN "convValueMicros" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN "localConvValueMicros" BIGINT NOT NULL DEFAULT 0;

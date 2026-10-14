@@ -27,7 +27,7 @@ export function GoogleAdsPage() {
     onSuccess: () => queryClient.invalidateQueries(),
   });
   const sync = useMutation({
-    mutationFn: () => post('/google-ads/sync', {}),
+    mutationFn: (full: boolean = false) => post('/google-ads/sync', { full }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gads-accounts'] }),
   });
   const running = accounts.data?.some((a) => a.running) ?? false;
@@ -38,8 +38,14 @@ export function GoogleAdsPage() {
         <h1>Google Ads</h1>
         <div className="row">
           {can('ADMIN', 'MANAGER') && !!accounts.data?.length && (
-            <button disabled={running || sync.isPending} onClick={() => sync.mutate()}>
+            <button disabled={running || sync.isPending} onClick={() => sync.mutate(false)}>
               {running ? <span className="spinner" /> : '⟳'} {running ? 'Đang cập nhật' : 'Update chi phí'}
+            </button>
+          )}
+          {can('ADMIN') && !!accounts.data?.length && (
+            <button disabled={running || sync.isPending} title="Tải lại toàn bộ 90 ngày gần nhất từ Google Ads"
+              onClick={() => confirm('Tải lại toàn bộ 90 ngày chi phí, installs và conversion value từ Google Ads?') && sync.mutate(true)}>
+              Tải lại 90 ngày
             </button>
           )}
           {can('ADMIN') && (
@@ -111,8 +117,7 @@ export function GoogleAdsPage() {
       )}
 
       {!!accounts.data?.length && (
-        <CampaignTable apiBase="/google-ads"
-          currency={new Set(accounts.data.map((a) => a.currencyCode)).size === 1 ? accounts.data[0].currencyCode : undefined} />
+        <CampaignTable apiBase="/google-ads" withRoas />
       )}
     </>
   );

@@ -122,6 +122,8 @@ export interface FbCampaign {
   /** Chi phí theo tiền tệ gốc của tài khoản quảng cáo. */
   localSpend: number;
   installs: number;
+  /** Conversion value nền tảng báo (USD). Facebook luôn 0. */
+  convValue: number;
   account: { id: string; name: string };
 }
 
@@ -139,3 +141,16 @@ export interface GadsAccount {
 
 /** Cùng dạng với FbCampaign: ghép chiến dịch với app AdMob. */
 export type GadsCampaign = FbCampaign;
+
+/** 1 ngày của 1 chiến dịch (trang Google Ads, xem theo ngày). */
+export interface CampaignDay {
+  date: string;
+  spend: number;
+  localSpend: number;
+  impressions: number;
+  clicks: number;
+  installs: number;
+  cpi: number | null;
+  convValue: number;
+  roas: number | null;
+}

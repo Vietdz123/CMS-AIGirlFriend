@@ -27,6 +27,8 @@ export interface GadsSpendRow {
   impressions: bigint;
   clicks: bigint;
   installs: bigint;
+  /** Conversion value theo tiền tệ gốc của tài khoản (micros). */
+  convValueMicros: bigint;
 }
 
 /**
@@ -90,8 +92,8 @@ export class GoogleAdsApiService {
    *
    * Tổng theo ngày x chiến dịch lấy từ resource campaign (khớp số trên giao diện Google Ads). geographic_view chỉ
    * dùng để chia tổng đó theo quốc gia (vị trí thực của người xem, LOCATION_OF_PRESENCE), vì nó có thể thiếu một
-   * phần chi phí của App campaign. Phần chênh lệch (và toàn bộ install: biddable_app_install_conversions không
-   * lấy được qua geographic_view) ghi vào dòng quốc gia "ZZ" (không rõ), nên tổng theo app/ngày luôn đúng.
+   * phần chi phí của App campaign. Phần chênh lệch, toàn bộ install và conversion value (không lấy được qua
+   * geographic_view) ghi vào dòng quốc gia "ZZ" (không rõ), nên tổng theo app/ngày luôn đúng.
    */
   async spend(client: OAuth2Client, customerId: string, loginCustomerId: string, from: string, to: string) {
     const [geoRows, campaignRows] = await Promise.all([
@@ -104,7 +106,7 @@ export class GoogleAdsApiService {
           AND metrics.cost_micros > 0`),
       this.search(client, customerId, loginCustomerId, `
         SELECT segments.date, campaign.id, campaign.name, metrics.cost_micros, metrics.impressions,
-               metrics.clicks, metrics.biddable_app_install_conversions
+               metrics.clicks, metrics.biddable_app_install_conversions, metrics.conversions_value
         FROM campaign
         WHERE segments.date BETWEEN '${from}' AND '${to}'`), // GAQL không có OR/ngoặc: dòng toàn 0 bị bỏ ở dưới
     ]);
@@ -120,6 +122,7 @@ export class GoogleAdsApiService {
       impressions: BigInt(r.metrics.impressions ?? 0),
       clicks: BigInt(r.metrics.clicks ?? 0),
       installs: 0n,
+      convValueMicros: 0n,
     }));
 
     // Tổng đã chia theo quốc gia, để tính phần còn thiếu so với tổng của chiến dịch.
@@ -144,8 +147,10 @@ export class GoogleAdsApiService {
         impressions: positive(BigInt(r.metrics.impressions ?? 0) - g.impressions),
         clicks: positive(BigInt(r.metrics.clicks ?? 0) - g.clicks),
         installs: BigInt(Math.round(Number(r.metrics.biddableAppInstallConversions ?? 0))),
+        // conversions_value là số thực theo tiền tệ tài khoản (không phải micros).
+        convValueMicros: BigInt(Math.round(Number(r.metrics.conversionsValue ?? 0) * 1e6)),
       };
-      if (row.spendMicros || row.impressions || row.clicks || row.installs) out.push(row);
+      if (row.spendMicros || row.impressions || row.clicks || row.installs || row.convValueMicros) out.push(row);
     }
     return out;
   }
