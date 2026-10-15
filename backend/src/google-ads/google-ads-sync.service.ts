@@ -1,7 +1,8 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { GadsAccount, Prisma } from '@prisma/client';
+import { OAuth2Client } from 'google-auth-library';
 import { AdmobApiService } from '../admob/admob-api.service';
 import { batches, minDate } from '../common/batches';
 import { decrypt } from '../common/crypto';
@@ -15,6 +16,9 @@ export const GOOGLE_SOURCE = 'google';
 /** Google Ads vẫn điều chỉnh chi phí/conversion vài ngày sau, nên mỗi lần sync lấy lại vài ngày gần nhất. */
 const RECENT_DAYS = 3;
 const CHUNK_DAYS = 30;
+/** ROAS D30 cần conversion value phát sinh tới 30 ngày sau ngày tương tác; thêm vài ngày cho conversion báo trễ. */
+const LAG_WINDOW_DAYS = 34;
+const LAG_CHUNK_DAYS = 34;
 
 @Injectable()
 export class GoogleAdsSyncService {
@@ -136,9 +140,16 @@ export class GoogleAdsSyncService {
         rowCount += data.length;
       }
 
+      // ROAS D0…D30 là phần phụ: lỗi ở đây không được làm hỏng chi phí vừa lưu, chỉ ghi lại để hiện trên trang.
+      const lagError = await this.syncConversionLag(client, account, from, to).then(
+        () => null,
+        (e: any) => `ROAS D0–D30: ${e?.message ?? String(e)}`,
+      );
+      if (lagError) this.logger.warn(`Google Ads sync ${accountId}: ${lagError}`);
+
       await this.prisma.gadsAccount.update({
         where: { id: accountId },
-        data: { lastSyncedAt: new Date(), lastError: null },
+        data: { lastSyncedAt: new Date(), lastError: lagError?.slice(0, 1000) ?? null },
       });
       this.logger.log(`Google Ads sync ${accountId} ${from}..${to}: ${rowCount} rows`);
     } catch (e: any) {
@@ -146,6 +157,33 @@ export class GoogleAdsSyncService {
       this.logger.error(`Google Ads sync ${accountId} failed: ${message}`);
       await this.prisma.gadsAccount.update({ where: { id: accountId }, data: { lastError: message.slice(0, 1000) } });
       throw e;
+    }
+  }
+
+  /**
+   * Conversion value theo độ trễ (cho ROAS D0…D30). Giá trị của 1 ngày tương tác còn tăng thêm tới 30 ngày sau,
+   * nên luôn lấy lại ít nhất LAG_WINDOW_DAYS ngày gần nhất, kể cả khi sync thường chỉ lấy 3 ngày.
+   */
+  private async syncConversionLag(client: OAuth2Client, account: GadsAccount, from: string, to: string) {
+    const lagFrom = minDate(from, addDays(to, -(LAG_WINDOW_DAYS - 1)));
+    for (let chunkFrom = lagFrom; chunkFrom <= to; chunkFrom = addDays(chunkFrom, LAG_CHUNK_DAYS)) {
+      const chunkTo = minDate(addDays(chunkFrom, LAG_CHUNK_DAYS - 1), to);
+      const rows = await this.api.conversionLag(client, account.id, account.loginCustomerId, chunkFrom, chunkTo);
+      const toUsd = await this.fx.converter(account.currencyCode, chunkFrom, chunkTo);
+      const data: Prisma.GadsConvLagStatCreateManyInput[] = rows.map((r) => ({
+        accountId: account.id,
+        date: toDbDate(r.date),
+        campaignId: r.campaignId,
+        lagBucket: r.lagBucket,
+        valueMicros: toUsd(r.date, r.valueMicros),
+        localValueMicros: r.valueMicros,
+      }));
+      await this.prisma.$transaction([
+        this.prisma.gadsConvLagStat.deleteMany({
+          where: { accountId: account.id, date: { gte: toDbDate(chunkFrom), lte: toDbDate(chunkTo) } },
+        }),
+        ...batches(data).map((d) => this.prisma.gadsConvLagStat.createMany({ data: d })),
+      ]);
     }
   }
 }

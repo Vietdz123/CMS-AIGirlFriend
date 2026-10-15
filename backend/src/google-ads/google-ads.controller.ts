@@ -3,8 +3,8 @@ import { Role } from '@prisma/client';
 import { IsOptional, IsString } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
-import { allowedAdAccountIds, campaignDaily, campaignPackages, listCampaigns } from '../common/ad-campaigns';
-import { isIsoDate } from '../common/dates';
+import { allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, listCampaigns } from '../common/ad-campaigns';
+import { isIsoDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { GOOGLE_SOURCE, GoogleAdsSyncService } from './google-ads-sync.service';
 import { GoogleAdsService } from './google-ads.service';
@@ -56,6 +56,7 @@ export class GoogleAdsController {
   async remove(@Param('id') id: string) {
     await this.prisma.$transaction([
       this.prisma.adSpendStat.deleteMany({ where: { source: GOOGLE_SOURCE, accountId: id } }),
+      this.prisma.gadsConvLagStat.deleteMany({ where: { accountId: id } }),
       this.prisma.gadsAccount.delete({ where: { id } }),
     ]);
     return { ok: true };
@@ -99,6 +100,26 @@ export class GoogleAdsController {
       if (!visible.some((c) => c.id === id)) throw new ForbiddenException('Không có quyền xem chiến dịch này');
     }
     return campaignDaily(this.prisma, 'google', id, q.from, q.to);
+  }
+
+  /**
+   * ROAS D0/D1/D3/D7/D14/D30 theo ngày tương tác quảng cáo. Query: from, to, campaignIds, storeIds (phân tách bằng
+   * dấu phẩy). Người không phải admin chỉ tính trên chiến dịch ghép với app được gán.
+   */
+  @Get('roas-cohort')
+  async roasCohort(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
+    if (!isIsoDate(q.from) || !isIsoDate(q.to) || q.from > q.to) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD và from <= to');
+    }
+    const account = await this.prisma.gadsAccount.findFirst({ select: { timeZone: true } });
+    return cohortRoas(this.prisma, {
+      from: q.from,
+      to: q.to,
+      today: todayIn(account?.timeZone ?? 'UTC'),
+      campaignIds: q.campaignIds?.split(',').filter(Boolean),
+      storeIds: q.storeIds?.split(',').filter(Boolean),
+      allowedAppIds: await this.access.allowedAppIds(user),
+    });
   }
 
   @Get('packages')

@@ -237,3 +237,7 @@ tr.detail-row:hover td { background: #f6f8fb; }
 .monet-tabs button.unmatched { color: var(--down); font-style: italic; }
 .unmatched-note { margin: 6px 0 0; }
 .notice.info { background: var(--accent-soft); color: var(--accent); margin: 8px 12px 0; }
+
+td.pos { color: var(--up); }
+td.neg { color: var(--danger); }
+.roas-partial { font-style: italic; opacity: 0.75; }

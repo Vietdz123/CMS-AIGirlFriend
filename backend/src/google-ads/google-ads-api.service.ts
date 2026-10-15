@@ -155,6 +155,25 @@ export class GoogleAdsApiService {
     return out;
   }
 
+  /**
+   * Conversion value theo ngày tương tác quảng cáo x chiến dịch x độ trễ chuyển đổi, để tính ROAS D0/D3/D7…
+   * (giá trị phát sinh trong vòng N ngày kể từ lúc tương tác). Bỏ dòng có giá trị 0.
+   */
+  async conversionLag(client: OAuth2Client, customerId: string, loginCustomerId: string, from: string, to: string) {
+    const rows = await this.search(client, customerId, loginCustomerId, `
+      SELECT segments.date, campaign.id, segments.conversion_lag_bucket, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${from}' AND '${to}'
+        AND metrics.conversions_value > 0`);
+    return rows.map((r) => ({
+      date: r.segments.date as string,
+      campaignId: String(r.campaign.id),
+      lagBucket: String(r.segments.conversionLagBucket ?? 'UNKNOWN'),
+      // conversions_value là số thực theo tiền tệ tài khoản (không phải micros).
+      valueMicros: BigInt(Math.round(Number(r.metrics.conversionsValue ?? 0) * 1e6)),
+    }));
+  }
+
   /** geographic_view trả id tiêu chí địa lý (2704 = VN); đổi sang mã ISO 2 ký tự giống AdMob/Facebook. */
   private async countryCodes(client: OAuth2Client, customerId: string, loginCustomerId: string, ids: string[]) {
     const unique = [...new Set(ids.filter((id) => /^\d+$/.test(id)))];

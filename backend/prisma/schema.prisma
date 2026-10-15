@@ -239,3 +239,18 @@ model FxRate {
 
   @@id([date, currency])
 }
+
+/// Conversion value Google Ads theo độ trễ chuyển đổi, để tính ROAS D0/D3/D7/D14/D30.
+/// 1 dòng = 1 ngày tương tác quảng cáo x 1 chiến dịch x 1 nhóm độ trễ (segments.conversion_lag_bucket).
+model GadsConvLagStat {
+  id               BigInt   @id @default(autoincrement())
+  accountId        String
+  date             DateTime @db.Date
+  campaignId       String
+  lagBucket        String // LESS_THAN_ONE_DAY, ONE_TO_TWO_DAYS, ... (tên enum của Google Ads)
+  valueMicros      BigInt // USD
+  localValueMicros BigInt // tiền tệ gốc của tài khoản
+
+  @@index([accountId, date])
+  @@index([campaignId, date])
+}

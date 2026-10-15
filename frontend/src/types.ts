@@ -156,3 +156,15 @@ export interface CampaignDay {
   convValue: number;
   roas: number | null;
 }
+
+/** 1 dòng ROAS cohort Google Ads: ngày tương tác quảng cáo, giá trị và ROAS theo mốc (null = chưa đủ ngày). */
+export interface CohortRoasRow {
+  date: string;
+  spend: number;
+  installs: number;
+  convValue: number;
+  value: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number>;
+  roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
+  /** partial: số tích luỹ tới hiện tại, còn tăng; final: đã đủ ngày, đã chốt. */
+  status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
+}

@@ -5,3 +5,5 @@ dist
 .DS_Store
 .env.production
 .env.server
+backups/
+secrets/
