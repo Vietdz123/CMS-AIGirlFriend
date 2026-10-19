@@ -197,10 +197,17 @@ export class GoogleAdsApiService {
     return (Array.isArray(res) ? res : [res]).flatMap((b) => b.results ?? []);
   }
 
-  private async request<T>(client: OAuth2Client, opts: Parameters<OAuth2Client['request']>[0]): Promise<T> {
+  private async request<T>(client: OAuth2Client, opts: Parameters<OAuth2Client['request']>[0], attempt = 1): Promise<T> {
     try {
       return (await client.request<T>(opts)).data;
     } catch (e: any) {
+      // Lỗi mạng tạm thời (timeout, mất kết nối) hoặc Google quá tải: đợi rồi thử lại, tối đa 4 lần.
+      const status = e?.response?.status;
+      const transient = !status || status === 429 || status >= 500;
+      if (transient && attempt < 4) {
+        await new Promise((r) => setTimeout(r, 3000 * attempt));
+        return this.request<T>(client, opts, attempt + 1);
+      }
       throw new Error(`Google Ads API: ${errorMessage(e)}`);
     }
   }

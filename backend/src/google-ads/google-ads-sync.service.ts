@@ -88,7 +88,9 @@ export class GoogleAdsSyncService {
   private async run(accountId: string, days: number) {
     const account = await this.prisma.gadsAccount.findUniqueOrThrow({ where: { id: accountId } });
     const to = todayIn(account.timeZone);
-    const from = addDays(to, -(days - 1));
+    // Conversion value của 1 ngày còn được Google điều chỉnh (tăng hoặc giảm) tới khoảng 30 ngày sau, nên chi phí và
+    // conversion value luôn lấy lại ít nhất LAG_WINDOW_DAYS ngày để khớp với bảng ROAS theo độ trễ.
+    const from = addDays(to, -(Math.max(days, LAG_WINDOW_DAYS) - 1));
     try {
       const client = this.oauth.clientFor(decrypt(account.refreshTokenEnc));
       const campaigns = await this.api.campaigns(client, accountId, account.loginCustomerId);

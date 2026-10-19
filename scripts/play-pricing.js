@@ -9,6 +9,8 @@
  *   node scripts/play-pricing.js com.muchie.ai.chat --apply    # áp dụng
  *   node scripts/play-pricing.js com.muchie.ai.chat --set-us coin_pack_29.99=29.99 [--apply]
  *     → đặt lại giá US của sản phẩm đó trước, rồi tính các nước trong RULES theo giá US mới.
+ *   node scripts/play-pricing.js com.muchie.ai.chat --only FR,DE [--apply]
+ *     → chỉ đổi các nước này (phải có trong RULES); các nước khác trong RULES giữ nguyên dù tỷ giá đã đổi.
  *
  * --apply: lưu bản sao từng sản phẩm vào backups/ trước khi sửa, sửa xong đọc lại để xác nhận.
  * Gói đăng ký: giá mới chỉ áp dụng cho người đăng ký mới; người đang đăng ký giữ giá cũ.
@@ -20,7 +22,7 @@ const { GoogleAuth } = require(path.join(__dirname, '../backend/node_modules/goo
 
 /** Hệ số chia theo nước (mã ISO 3166-1). */
 const RULES = {
-  MX: 1.3,
+  MX: 1.3, FR: 1.3,
   GE: 1.5, HU: 1.5, JO: 1.5, PH: 1.5, SA: 1.5, TH: 1.5, TR: 1.5, VN: 1.5,
   BR: 2, CO: 2, EG: 2, MY: 2, PK: 2, UA: 2, UZ: 2,
   AR: 2.5, IN: 2.5, ID: 2.5, IQ: 2.5, MA: 2.5, PE: 2.5,
@@ -40,7 +42,17 @@ args.forEach((a, i) => {
   }
   usOverrides.set(id, Number(price));
 });
-const [pkg] = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--set-us');
+/** --only <mã nước,...>: chỉ đổi các nước này. */
+const onlyArg = args[args.indexOf('--only') + 1];
+const only = args.includes('--only') ? new Set(String(onlyArg ?? '').toUpperCase().split(',').filter(Boolean)) : null;
+if (only) {
+  const unknownRegions = [...only].filter((r) => !RULES[r]);
+  if (!only.size || unknownRegions.length) {
+    console.error(`--only: nước không có trong RULES: ${unknownRegions.join(', ') || '(trống)'}`);
+    process.exit(1);
+  }
+}
+const [pkg] = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--set-us' && args[i - 1] !== '--only');
 if (!pkg) {
   console.error('Cách dùng: node scripts/play-pricing.js <packageName> [--apply]');
   process.exit(1);
@@ -144,7 +156,7 @@ async function plan(client, kind, product) {
       usCfg.price = after;
     }
     const us = usCfg.price;
-    for (const [region, divisor] of Object.entries(RULES)) {
+    for (const [region, divisor] of Object.entries(RULES).filter(([r]) => !only || only.has(r))) {
       const cfg = unit.configs.find((c) => c.regionCode === region);
       if (!cfg?.price) {
         rows.push({ unit, region, divisor, skip: 'chưa bán ở nước này' });
