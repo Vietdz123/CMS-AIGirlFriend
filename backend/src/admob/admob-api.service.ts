@@ -89,7 +89,14 @@ export class AdmobApiService {
     to: string,
     dimensions: string[],
     currencyCode: string,
+    /** Lọc: dimension -> danh sách giá trị (khớp bất kỳ). */
+    filters: Record<string, string[]> = {},
+    maxReportRows?: number,
   ): Promise<ReportRow[]> {
+    const dimensionFilters = Object.entries(filters)
+      .filter(([, values]) => values.length)
+      // StringList.values là mảng chuỗi thuần (ví dụ trong tài liệu AdMob dùng {value} là sai).
+      .map(([dimension, values]) => ({ dimension, matchesAny: { values } }));
     const res = await client.request<Array<{ row?: ReportRow; footer?: { warnings?: unknown[] } }>>({
       url: `${API}/accounts/${publisherId}/mediationReport:generate`,
       method: 'POST',
@@ -99,6 +106,8 @@ export class AdmobApiService {
           dimensions,
           metrics: REPORT_METRICS,
           localizationSettings: { currencyCode },
+          ...(dimensionFilters.length ? { dimensionFilters } : {}),
+          ...(maxReportRows ? { maxReportRows } : {}),
         },
       },
     });

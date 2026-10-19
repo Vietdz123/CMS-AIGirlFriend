@@ -2,6 +2,7 @@ import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser } from '../auth/decorators';
 import { isIsoDate } from '../common/dates';
+import { EXPLORE_DIMENSIONS, ExploreDimension, ExploreService } from './explore.service';
 import { Dimension, Granularity, ReportFilter, ReportsService } from './reports.service';
 
 const DIMENSIONS: Dimension[] = ['app', 'adUnit', 'format', 'country', 'adSource', 'account'];
@@ -15,7 +16,37 @@ export class ReportsController {
   constructor(
     private reports: ReportsService,
     private access: AppAccessService,
+    private explore: ExploreService,
   ) {}
+
+  /**
+   * Bảng phân tích tuỳ chọn chiều (giống báo cáo AdMob), lấy trực tiếp từ AdMob API.
+   * Query: from, to, dimensions (date,account,app,adUnit,format,adSource,country,appVersion),
+   * appIds, adUnitIds, adSourceIds, appVersions, countries, formats (phân tách bằng dấu phẩy).
+   */
+  @Get('explore')
+  async exploreReport(@CurrentUser() user: AuthUser, @Query() q: FilterQuery) {
+    const base = await this.filter(user, q);
+    const dimensions = (list(q.dimensions) ?? []) as ExploreDimension[];
+    if (dimensions.some((d) => !(d in EXPLORE_DIMENSIONS))) throw new BadRequestException('dimension không hợp lệ');
+    return this.explore.run({
+      from: base.from,
+      to: base.to,
+      appIds: base.appIds,
+      dimensions,
+      adUnitIds: list(q.adUnitIds),
+      adSourceIds: list(q.adSourceIds),
+      appVersions: list(q.appVersions),
+      countries: base.countries,
+      formats: base.formats,
+    });
+  }
+
+  @Get('explore/options')
+  async exploreOptions(@CurrentUser() user: AuthUser, @Query() q: FilterQuery) {
+    const base = await this.filter(user, q);
+    return this.explore.options({ from: base.from, to: base.to, appIds: base.appIds });
+  }
 
   @Get('summary')
   async summary(@CurrentUser() user: AuthUser, @Query() q: FilterQuery) {

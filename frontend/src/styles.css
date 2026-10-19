@@ -241,3 +241,11 @@ tr.detail-row:hover td { background: #f6f8fb; }
 td.pos { color: var(--up); }
 td.neg { color: var(--danger); }
 .roas-partial { font-style: italic; opacity: 0.75; }
+
+/* Phân tích chi tiết (explore) */
+.explore-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; margin-bottom: 12px; }
+.explore-filters .primary { padding: 7px 22px; }
+.explore-table th.sorted, .explore-table td.sorted { background: #f3f6fd; }
+.explore-table td.label-cell { max-width: 260px; }
+.warn-text { color: #b45309; }
+.spinner.dark { border-color: rgba(0, 0, 0, 0.15); border-top-color: var(--accent); }
