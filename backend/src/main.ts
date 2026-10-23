@@ -19,10 +19,18 @@ async function bootstrap() {
   // Production: phục vụ luôn frontend đã build (PUBLIC_DIR) từ cùng 1 server.
   const publicDir = process.env.PUBLIC_DIR;
   if (publicDir && existsSync(publicDir)) {
-    app.useStaticAssets(publicDir, { index: false, maxAge: '1h' });
+    // File trong assets/ có hash trong tên nên cache lâu được; index.html luôn phải lấy bản mới, nếu không trình duyệt
+    // giữ giao diện cũ (gọi API mới bằng code cũ) sau mỗi lần cập nhật.
+    app.useStaticAssets(publicDir, {
+      index: false,
+      setHeaders: (res: any, path: string) => {
+        res.setHeader('Cache-Control', path.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    });
     // Mọi route không phải /api trả về index.html để React Router xử lý.
     app.use((req: any, res: any, next: () => void) => {
       if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(join(publicDir, 'index.html'));
     });
   }

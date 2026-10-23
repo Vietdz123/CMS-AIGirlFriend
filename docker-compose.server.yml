@@ -26,6 +26,27 @@ services:
     # Chỉ mở cho chính máy này; Tailscale Funnel lo HTTPS và đưa traffic từ Internet vào.
     ports:
       - "127.0.0.1:3000:3000"
+    # Key service account (GA4 retention), chỉ đọc. Thư mục secrets/ không nằm trong git.
+    volumes:
+      - ./secrets:/run/secrets/cms:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Sao lưu database mỗi ngày 02:30 (giờ VN) vào ./backups/daily, giữ 14 bản (scripts/db-backup.sh).
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: ["sh", "/scripts/db-backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: admob
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: admob_cms
+      KEEP: "14"
+    volumes:
+      - ./scripts/db-backup.sh:/scripts/db-backup.sh:ro
+      - ./backups:/backups
     depends_on:
       postgres:
         condition: service_healthy

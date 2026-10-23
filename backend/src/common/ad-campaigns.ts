@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { budgetByDate } from './budget-history';
 
 export interface CampaignQuery {
   from?: string;
@@ -120,6 +121,7 @@ export async function campaignDaily(prisma: PrismaService, source: 'facebook' | 
     WHERE source = ${source} AND "campaignId" = ${campaignId}
       AND date BETWEEN ${from}::date AND ${to}::date
     GROUP BY date ORDER BY date DESC`;
+  const budgets = await budgetByDate(prisma, source, campaignId, from, to);
   return rows.map((r) => {
     const spend = Number(r.spend_micros) / 1e6;
     const installs = Number(r.installs);
@@ -134,6 +136,9 @@ export async function campaignDaily(prisma: PrismaService, source: 'facebook' | 
       cpi: installs ? spend / installs : null,
       convValue,
       roas: spend ? convValue / spend : null,
+      /** Budget/ngày (USD và tiền gốc), mức cuối ngày; null = chưa ghi nhận được. */
+      budget: budgets.get(r.date.toISOString().slice(0, 10))?.budget ?? null,
+      localBudget: budgets.get(r.date.toISOString().slice(0, 10))?.localBudget ?? null,
     };
   });
 }
@@ -238,4 +243,69 @@ export async function cohortRoas(prisma: PrismaService, q: CohortRoasQuery) {
       status,
     };
   });
+}
+
+/**
+ * Các chiến dịch Google Ads chạy trong 1 ngày (theo bộ lọc của bảng ROAS theo ngày): budget/ngày, chi phí, installs,
+ * CPI, conversion value tới hiện tại và ROAS D0…D30 của riêng ngày đó. Cùng nguồn số với bảng "Chiến dịch → App"
+ * khi chọn đúng ngày đó, nên tổng các chiến dịch khớp với dòng của ngày trong bảng ROAS.
+ */
+export async function cohortRoasCampaigns(prisma: PrismaService, q: Omit<CohortRoasQuery, 'from' | 'to'> & { date: string }) {
+  const campaigns = await listCampaigns(prisma, 'google', {
+    from: q.date, to: q.date, storeIds: q.storeIds, allowedAppIds: q.allowedAppIds,
+  });
+  const byId = new Map(campaigns.map((c) => [c.id, c]));
+  let ids = campaigns.map((c) => c.id);
+  if (q.campaignIds?.length) ids = ids.filter((id) => q.campaignIds!.includes(id));
+  if (!ids.length) return [];
+
+  const windows = ROAS_DAYS.map((n) => ({ n, ...lagWindow(n) }));
+  const dayCols = windows.map((w) =>
+    Prisma.sql`SUM(CASE WHEN "lagBucket" IN (${Prisma.join(w.buckets)}) THEN "valueMicros" ELSE 0 END)::bigint AS ${Prisma.raw(`d${w.n}`)}`);
+  const [lagRows, budgets] = await Promise.all([
+    prisma.$queryRaw<({ campaign_id: string; total: bigint } & Record<string, bigint>)[]>`
+      SELECT "campaignId" AS campaign_id, SUM("valueMicros")::bigint AS total, ${Prisma.join(dayCols)}
+      FROM "GadsConvLagStat"
+      WHERE "campaignId" IN (${Prisma.join(ids)}) AND date = ${q.date}::date
+      GROUP BY 1`,
+    prisma.campaignBudgetDay.findMany({
+      where: { source: 'google', campaignId: { in: ids }, date: new Date(`${q.date}T00:00:00Z`) },
+      select: { campaignId: true, budgetMicros: true, localBudgetMicros: true },
+    }),
+  ]);
+  const lagBy = new Map(lagRows.map((r) => [r.campaign_id, r]));
+  const budgetBy = new Map(budgets.map((b) => [b.campaignId, b]));
+  const age = Math.round((Date.parse(q.today) - Date.parse(q.date)) / 86_400_000);
+
+  return ids
+    .map((id) => {
+      const c = byId.get(id)!;
+      const lag = lagBy.get(id);
+      const budget = budgetBy.get(id);
+      const roas: Record<string, number | null> = {};
+      const status: Record<string, RoasStatus> = {};
+      for (const w of windows) {
+        const k = `d${w.n}`;
+        roas[k] = c.totalSpend ? Number(lag?.[k] ?? 0) / 1e6 / c.totalSpend : null;
+        status[k] = age <= w.days ? 'partial' : 'final';
+      }
+      return {
+        id,
+        name: c.name,
+        storeId: c.storeId,
+        budget: budget ? Number(budget.budgetMicros) / 1e6 : null,
+        localBudget: budget ? Number(budget.localBudgetMicros) / 1e6 : null,
+        spend: c.totalSpend,
+        localSpend: c.localSpend,
+        installs: c.installs,
+        cpi: c.installs ? c.totalSpend / c.installs : null,
+        /** Conversion value tới hiện tại (mọi độ trễ), giống cột Conv. value của bảng "Chiến dịch → App". */
+        convValue: c.convValue,
+        roas,
+        status,
+      };
+    })
+    // Bỏ chiến dịch không chạy trong ngày đó (không chi phí, không install, không doanh thu).
+    .filter((c) => c.spend >= 0.01 || c.installs > 0 || c.convValue > 0)
+    .sort((a, b) => b.spend - a.spend);
 }

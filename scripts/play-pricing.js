@@ -9,6 +9,8 @@
  *   node scripts/play-pricing.js com.muchie.ai.chat --apply    # áp dụng
  *   node scripts/play-pricing.js com.muchie.ai.chat --set-us coin_pack_29.99=29.99 [--apply]
  *     → đặt lại giá US của sản phẩm đó trước, rồi tính các nước trong RULES theo giá US mới.
+ *   node scripts/play-pricing.js com.muchie.ai.chat --us-percent -15 [--apply]
+ *     → CHỈ đổi giá US: giá US hiện tại × (1 + n/100), làm tròn tới cent; mọi nước khác giữ nguyên (bỏ qua RULES).
  *   node scripts/play-pricing.js com.muchie.ai.chat --only FR,DE [--apply]
  *     → chỉ đổi các nước này (phải có trong RULES); các nước khác trong RULES giữ nguyên dù tỷ giá đã đổi.
  *
@@ -42,6 +44,12 @@ args.forEach((a, i) => {
   }
   usOverrides.set(id, Number(price));
 });
+/** --us-percent <n>: chỉ đổi giá US theo phần trăm (âm = giảm), không đụng nước nào khác. */
+const usPercentArg = args.includes('--us-percent') ? Number(args[args.indexOf('--us-percent') + 1]) : null;
+if (usPercentArg !== null && !(Number.isFinite(usPercentArg) && usPercentArg > -100)) {
+  console.error('--us-percent cần một số > -100, ví dụ --us-percent -15');
+  process.exit(1);
+}
 /** --only <mã nước,...>: chỉ đổi các nước này. */
 const onlyArg = args[args.indexOf('--only') + 1];
 const only = args.includes('--only') ? new Set(String(onlyArg ?? '').toUpperCase().split(',').filter(Boolean)) : null;
@@ -52,7 +60,7 @@ if (only) {
     process.exit(1);
   }
 }
-const [pkg] = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--set-us' && args[i - 1] !== '--only');
+const [pkg] = args.filter((a, i) => !a.startsWith('--') && !['--set-us', '--only', '--us-percent'].includes(args[i - 1]));
 if (!pkg) {
   console.error('Cách dùng: node scripts/play-pricing.js <packageName> [--apply]');
   process.exit(1);
@@ -155,6 +163,15 @@ async function plan(client, kind, product) {
         changed: !samePrice(usCfg.price, after) });
       usCfg.price = after;
     }
+    if (usPercentArg !== null) {
+      // Chỉ đổi giá US; các nước khác (kể cả nước trong RULES) giữ nguyên.
+      const usd = Math.round(fromMoney(usCfg.price) * (1 + usPercentArg / 100) * 100) / 100;
+      const after = toMoney('USD', usd);
+      rows.push({ unit, region: 'US', divisor: 1, us: usCfg.price, usd, before: usCfg.price, after,
+        changed: !samePrice(usCfg.price, after) });
+      usCfg.price = after;
+      continue;
+    }
     const us = usCfg.price;
     for (const [region, divisor] of Object.entries(RULES).filter(([r]) => !only || only.has(r))) {
       const cfg = unit.configs.find((c) => c.regionCode === region);
@@ -181,7 +198,8 @@ async function plan(client, kind, product) {
 
 async function main() {
   const client = await auth.getClient();
-  console.log(`App: ${pkg}   ${apply ? 'ÁP DỤNG' : 'XEM TRƯỚC (không sửa gì)'}\n`);
+  console.log(`App: ${pkg}   ${apply ? 'ÁP DỤNG' : 'XEM TRƯỚC (không sửa gì)'}`
+    + `${usPercentArg !== null ? `   CHỈ ĐỔI GIÁ US ${usPercentArg > 0 ? '+' : ''}${usPercentArg}%` : ''}\n`);
 
   const products = [
     ...(await listAll(client, `${API}/applications/${pkg}/oneTimeProducts`, 'oneTimeProducts')).map((p) => ({ kind: 'onetime', p })),

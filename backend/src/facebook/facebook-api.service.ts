@@ -99,6 +99,62 @@ export class FacebookApiService {
     });
   }
 
+  /**
+   * Budget/ngày hiện tại theo chiến dịch (tiền gốc, micros). Budget đặt ở chiến dịch (CBO) lấy thẳng; budget đặt ở
+   * ad set thì cộng daily_budget của các ad set đang chạy. Facebook trả số tiền theo đơn vị nhỏ nhất (cent).
+   */
+  async campaignBudgets(token: string, accountId: string, currency: string) {
+    const [campaigns, adSets] = await Promise.all([
+      this.listAll<{ id: string; daily_budget?: string }>(token, `${accountId}/campaigns`, { fields: 'id,daily_budget' }),
+      this.listAll<{ campaign_id: string; daily_budget?: string; effective_status?: string }>(
+        token, `${accountId}/adsets`, { fields: 'campaign_id,daily_budget,effective_status' }),
+    ]);
+    const factor = 1e6 / minorUnit(currency);
+    const out = new Map<string, bigint>();
+    for (const c of campaigns) if (Number(c.daily_budget) > 0) out.set(c.id, BigInt(Math.round(Number(c.daily_budget) * factor)));
+    for (const s of adSets) {
+      if (out.has(s.campaign_id) || !(Number(s.daily_budget) > 0) || s.effective_status !== 'ACTIVE') continue;
+      out.set(`adset:${s.campaign_id}`, (out.get(`adset:${s.campaign_id}`) ?? 0n) + BigInt(Math.round(Number(s.daily_budget) * factor)));
+    }
+    for (const [k, v] of [...out]) {
+      if (!k.startsWith('adset:')) continue;
+      out.delete(k);
+      if (!out.has(k.slice(6))) out.set(k.slice(6), v);
+    }
+    return out;
+  }
+
+  /**
+   * Các lần đổi budget/ngày của chiến dịch (CBO) từ nhật ký hoạt động. Thời điểm trả về là UTC; ngày được quy về
+   * múi giờ tài khoản. Chỉ lấy loại "Per day"; lifetime budget bị bỏ qua.
+   */
+  async budgetChanges(token: string, accountId: string, from: string, timeZone: string) {
+    const rows = await this.listAll<{ event_type: string; event_time: string; object_id: string; extra_data?: string }>(
+      token, `${accountId}/activities`,
+      { fields: 'event_type,event_time,object_id,extra_data', since: String(Math.floor(Date.parse(`${from}T00:00:00Z`) / 1000) - 86400) },
+    );
+    const dateFmt = new Intl.DateTimeFormat('en-CA', { timeZone });
+    return rows
+      .filter((r) => r.event_type === 'update_campaign_budget' && r.extra_data)
+      .map((r) => {
+        let data: any;
+        try { data = JSON.parse(r.extra_data!); } catch { return null; }
+        const oldV = data?.old_value;
+        const newV = data?.new_value;
+        if (newV?.additional_value !== 'Per day' || typeof newV?.new_value !== 'number') return null;
+        const currency = String(newV.currency ?? 'USD');
+        const toMicros = (v: number) => BigInt(Math.round(v * 1e6 / minorUnit(currency)));
+        return {
+          campaignId: r.object_id,
+          at: r.event_time,
+          date: dateFmt.format(new Date(r.event_time)),
+          oldMicros: oldV?.additional_value === 'Per day' && typeof oldV?.old_value === 'number' ? toMicros(oldV.old_value) : null,
+          newMicros: toMicros(newV.new_value),
+        };
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+  }
+
   private async listAll<T>(token: string, path: string, params: Record<string, string>): Promise<T[]> {
     const url = new URL(`${this.base()}/${path}`);
     for (const [k, v] of Object.entries({ ...params, limit: '500', access_token: token })) url.searchParams.set(k, v);
@@ -124,4 +180,10 @@ export class FacebookApiService {
 function parseStoreId(url?: string): string | null {
   if (!url) return null;
   return url.match(/[?&]id=([\w.]+)/)?.[1] ?? url.match(/\/id(\d+)/)?.[1] ?? null;
+}
+
+/** Số đơn vị nhỏ nhất trong 1 đơn vị tiền (USD = 100 cent; VND, JPY… = 1), dùng cho số tiền Facebook trả về. */
+function minorUnit(currency: string) {
+  const digits = new Intl.NumberFormat('en-US', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  return 10 ** digits;
 }

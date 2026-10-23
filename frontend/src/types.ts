@@ -155,6 +155,9 @@ export interface CampaignDay {
   cpi: number | null;
   convValue: number;
   roas: number | null;
+  /** Budget/ngày (mức cuối ngày); null = chưa ghi nhận được. */
+  budget: number | null;
+  localBudget: number | null;
 }
 
 /** 1 dòng ROAS cohort Google Ads: ngày tương tác quảng cáo, giá trị và ROAS theo mốc (null = chưa đủ ngày). */
@@ -166,5 +169,69 @@ export interface CohortRoasRow {
   value: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number>;
   roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
   /** partial: số tích luỹ tới hiện tại, còn tăng; final: đã đủ ngày, đã chốt. */
+  status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
+}
+
+/** Retention theo ngày cài (GA4): số người dùng mới và active[n] = số còn hoạt động ngày thứ n (chỉ các ngày đã đủ). */
+export interface RetentionDay {
+  date: string;
+  newUsers: number;
+  active: number[];
+}
+
+/** Retention theo nước: tỷ lệ (0..1) ở từng mốc; null = chưa có ngày cài nào đủ mốc. */
+export interface RetentionCountry {
+  country: string;
+  newUsers: number;
+  d1: number | null;
+  d3: number | null;
+  d7: number | null;
+  d14: number | null;
+  d30: number | null;
+}
+
+export interface RetentionStatus {
+  enabled: boolean;
+  running: boolean;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  maxDay: number;
+}
+
+/** So sánh retention 2 kỳ; mix + rateEffect của các nhóm cộng lại = delta. */
+export interface RetentionCompare {
+  day: number;
+  by: 'country' | 'source' | 'version';
+  a: { from: string; to: string; users: number; rate: number | null };
+  b: { from: string; to: string; users: number; rate: number | null };
+  delta?: number;
+  mix?: number;
+  rateEffect?: number;
+  segments: {
+    key: string;
+    usersA: number;
+    usersB: number;
+    shareA: number;
+    shareB: number;
+    rateA: number | null;
+    rateB: number | null;
+    mix: number;
+    rateEffect: number;
+  }[];
+}
+
+/** 1 chiến dịch Google Ads trong 1 ngày của bảng ROAS theo ngày. */
+export interface CohortRoasCampaign {
+  id: string;
+  name: string;
+  storeId: string | null;
+  budget: number | null;
+  localBudget: number | null;
+  spend: number;
+  localSpend: number;
+  installs: number;
+  cpi: number | null;
+  convValue: number;
+  roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
   status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
 }

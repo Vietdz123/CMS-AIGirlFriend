@@ -254,3 +254,49 @@ model GadsConvLagStat {
   @@index([accountId, date])
   @@index([campaignId, date])
 }
+
+/// Budget/ngày của chiến dịch Facebook / Google Ads theo ngày (mức cuối ngày, theo múi giờ tài khoản quảng cáo).
+/// Ghi mỗi lần đồng bộ; các ngày trước được dựng lại từ lịch sử thay đổi budget (Google ~30 ngày, Facebook theo
+/// nhật ký hoạt động). Không có dòng = không có budget/ngày (chưa tạo chiến dịch, hoặc dùng lifetime budget).
+model CampaignBudgetDay {
+  id                BigInt   @id @default(autoincrement())
+  source            String // facebook | google
+  accountId         String
+  campaignId        String
+  date              DateTime @db.Date
+  budgetMicros      BigInt // USD
+  localBudgetMicros BigInt // tiền tệ gốc của tài khoản
+  currency          String
+
+  @@unique([source, campaignId, date])
+  @@index([accountId, date])
+}
+
+/// Retention từ GA4 (cohort theo ngày mở app lần đầu): 1 dòng = 1 ngày cài x 1 nước x 1 nguồn (firstUserSource).
+/// active[n] = số người dùng của cohort còn hoạt động vào ngày thứ n (n = 0..60). Mảng chỉ chứa các ngày đã đủ
+/// (ngày cài + n < hôm nay), nên độ dài mảng cho biết mốc nào đã có số.
+model RetentionStat {
+  id       BigInt   @id @default(autoincrement())
+  date     DateTime @db.Date // ngày cài (múi giờ property GA4)
+  country  String // ISO 3166-1, "ZZ" = không rõ
+  source   String // firstUserSource của GA4, ví dụ apps.facebook.com, google-play, (direct)
+  newUsers Int
+  active   Int[]
+
+  @@unique([date, country, source])
+  @@index([date])
+}
+
+/// Phiên bản app người dùng dùng trong ngày cài (ngày 0 của cohort), để ước tính retention theo phiên bản cài.
+/// GA4 không lưu phiên bản lúc cài; phiên bản ở ngày 0 gần đúng với phiên bản cài.
+model RetentionInstallVersion {
+  id         BigInt   @id @default(autoincrement())
+  date       DateTime @db.Date
+  country    String
+  source     String
+  appVersion String // "?" = GA4 không có phiên bản
+  users      Int
+
+  @@unique([date, country, source, appVersion])
+  @@index([date])
+}

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Prisma } from '@prisma/client';
 import { batches, minDate } from '../common/batches';
+import { saveBudgetDays } from '../common/budget-history';
 import { decrypt } from '../common/crypto';
 import { FxService } from '../common/fx.service';
 import { addDays, toDbDate, todayIn } from '../common/dates';
@@ -12,6 +13,8 @@ import { FacebookApiService } from './facebook-api.service';
 /** Facebook vẫn cập nhật chi phí/attribution vài ngày sau, nên mỗi lần sync lấy lại vài ngày gần nhất. */
 const RECENT_DAYS = 3;
 const CHUNK_DAYS = 30;
+/** Số ngày dựng lại budget/ngày từ nhật ký hoạt động mỗi lần đồng bộ. */
+const BUDGET_DAYS = 30;
 
 @Injectable()
 export class FacebookSyncService {
@@ -128,9 +131,16 @@ export class FacebookSyncService {
         rowCount += data.length;
       }
 
+      // Budget/ngày là phần phụ, lỗi không làm hỏng chi phí vừa lưu.
+      const budgetError = await this.syncBudgets(token, account, to).then(
+        () => null,
+        (e: any) => `Budget: ${e?.message ?? String(e)}`,
+      );
+      if (budgetError) this.logger.warn(`Facebook sync ${accountId}: ${budgetError}`);
+
       await this.prisma.fbAdAccount.update({
         where: { id: accountId },
-        data: { lastSyncedAt: new Date(), lastError: null },
+        data: { lastSyncedAt: new Date(), lastError: budgetError?.slice(0, 1000) ?? null },
       });
       this.logger.log(`Facebook sync ${accountId} ${from}..${to}: ${rowCount} rows`);
     } catch (e: any) {
@@ -139,5 +149,24 @@ export class FacebookSyncService {
       await this.prisma.fbAdAccount.update({ where: { id: accountId }, data: { lastError: message.slice(0, 1000) } });
       throw e;
     }
+  }
+
+  /** Budget/ngày của từng chiến dịch cho BUDGET_DAYS ngày gần nhất: budget hiện tại + nhật ký đổi budget, mức cuối ngày. */
+  private async syncBudgets(token: string, account: { id: string; currencyCode: string; timeZone: string }, to: string) {
+    const from = addDays(to, -(BUDGET_DAYS - 1));
+    const [current, changes] = await Promise.all([
+      this.api.campaignBudgets(token, account.id, account.currencyCode),
+      this.api.budgetChanges(token, account.id, from, account.timeZone),
+    ]);
+    await saveBudgetDays(this.prisma, {
+      source: 'facebook',
+      accountId: account.id,
+      currency: account.currencyCode,
+      from,
+      to,
+      current,
+      changes,
+      toUsd: await this.fx.converter(account.currencyCode, from, to),
+    });
   }
 }

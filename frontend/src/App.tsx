@@ -9,6 +9,8 @@ import { FacebookPage } from './pages/FacebookPage';
 import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { LoginPage } from './pages/LoginPage';
 import { MonetPage } from './pages/MonetPage';
+import { RankingFinancePage } from './pages/RankingFinancePage';
+import { RetentionPage } from './pages/RetentionPage';
 import { SyncHistoryPage } from './pages/SyncHistoryPage';
 import { UsersPage } from './pages/UsersPage';
 
@@ -22,6 +24,8 @@ export function App() {
       <Route element={user ? <Layout /> : <Navigate to="/login" replace />}>
         <Route index element={<DashboardPage />} />
         <Route path="monet" element={<MonetPage />} />
+        <Route path="ranking-finance" element={<RankingFinancePage />} />
+        <Route path="retention" element={<RetentionPage />} />
         <Route path="breakdown" element={<BreakdownPage />} />
         <Route path="apps" element={<AppsPage />} />
         <Route path="accounts" element={<AccountsPage />} />
@@ -49,6 +53,8 @@ function Layout() {
         <nav>
           <NavLink to="/" end>Tổng quan</NavLink>
           <NavLink to="/monet">Monet & UA</NavLink>
+          <NavLink to="/ranking-finance">Ranking Finance</NavLink>
+          <NavLink to="/retention">Retention</NavLink>
           <NavLink to="/breakdown">Phân tích chi tiết</NavLink>
           <NavLink to="/apps">Ứng dụng</NavLink>
           <NavLink to="/accounts">Tài khoản AdMob</NavLink>

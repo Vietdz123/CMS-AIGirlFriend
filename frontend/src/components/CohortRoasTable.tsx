@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { api, qs } from '../api';
 import { daysAgo, money, num } from '../format';
-import type { CohortRoasRow, FbCampaign } from '../types';
+import type { CohortRoasCampaign, CohortRoasRow, FbCampaign } from '../types';
 import { DateRangePicker } from './DateRangePicker';
 import { SearchSelect } from './SearchSelect';
 
@@ -31,6 +31,7 @@ export function CohortRoasTable() {
   const [range, setRange] = useState({ from: daysAgo(44), to: daysAgo(0) });
   const [campaignIds, setCampaignIds] = useState<string[]>([]);
   const [storeIds, setStoreIds] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const campaigns = useQuery({
     queryKey: ['campaigns', '/google-ads', 'all'],
@@ -96,14 +97,23 @@ export function CohortRoasTable() {
               </tr>
             )}
             {rows.map((r) => (
-              <tr key={r.date}>
-                <td>{r.date}</td>
-                <td className="num">{money(r.spend)}</td>
-                <td className="num">{num(r.installs)}</td>
-                <td className="num">{r.installs ? money(r.spend / r.installs) : '—'}</td>
-                {DAYS.map((d) => <RoasCell key={d} v={r.roas[d]} status={r.status[d]} />)}
-                <td className="num">{money(r.convValue)}</td>
-              </tr>
+              <Fragment key={r.date}>
+                <tr className="clickable" onClick={() => setExpanded(expanded === r.date ? null : r.date)}>
+                  <td><span className="muted">{expanded === r.date ? '▾ ' : '▸ '}</span>{r.date}</td>
+                  <td className="num">{money(r.spend)}</td>
+                  <td className="num">{num(r.installs)}</td>
+                  <td className="num">{r.installs ? money(r.spend / r.installs) : '—'}</td>
+                  {DAYS.map((d) => <RoasCell key={d} v={r.roas[d]} status={r.status[d]} />)}
+                  <td className="num">{money(r.convValue)}</td>
+                </tr>
+                {expanded === r.date && (
+                  <tr className="detail-row">
+                    <td colSpan={4 + DAYS.length + 1}>
+                      <DayCampaigns date={r.date} campaignIds={campaignIds} storeIds={storeIds} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {!data.isLoading && rows.length === 0 && (
               <tr><td colSpan={4 + DAYS.length + 1} className="center muted">Không có số liệu trong khoảng ngày này.</td></tr>
@@ -119,5 +129,49 @@ export function CohortRoasTable() {
         </p>
       )}
     </>
+  );
+}
+
+/** Các chiến dịch chạy trong 1 ngày: budget/ngày, chi phí, installs, CPI, conv. value, ROAS D0…D30 của ngày đó. */
+function DayCampaigns({ date, campaignIds, storeIds }: { date: string; campaignIds: string[]; storeIds: string[] }) {
+  const q = qs({ date, campaignIds, storeIds });
+  const data = useQuery({
+    queryKey: ['google-ads', 'roas-cohort', 'campaigns', q],
+    queryFn: () => api<CohortRoasCampaign[]>(`/google-ads/roas-cohort/campaigns?${q}`),
+  });
+
+  if (data.isLoading) return <div className="muted small">Đang tải…</div>;
+  if (data.error) return <div className="error-text small">{data.error.message}</div>;
+  if (!data.data?.length) return <div className="muted small">Không có chiến dịch nào chạy trong ngày {date}.</div>;
+
+  return (
+    <table className="daily-table">
+      <thead>
+        <tr>
+          <th>Chiến dịch ({date})</th>
+          <th className="num" title="Budget/ngày của chiến dịch (mức cuối ngày)">Budget/ngày</th>
+          <th className="num">Chi phí</th>
+          <th className="num">Installs</th>
+          <th className="num">CPI</th>
+          {DAYS.map((d) => <th key={d} className="num">ROAS {d.toUpperCase()}</th>)}
+          <th className="num" title="Conversion value ghi nhận tới hiện tại (mọi độ trễ)">Conv. value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.data.map((c) => (
+          <tr key={c.id}>
+            <td className="label-cell" title={`${c.name}\n${c.id}${c.storeId ? `\n${c.storeId}` : ''}`}>{c.name}</td>
+            <td className="num" title={c.budget === null ? 'Chưa ghi nhận được budget của ngày này' : undefined}>
+              {c.budget === null ? '—' : money(c.budget)}
+            </td>
+            <td className="num">{money(c.spend)}</td>
+            <td className="num">{num(c.installs)}</td>
+            <td className="num">{c.cpi === null ? '—' : money(c.cpi)}</td>
+            {DAYS.map((d) => <RoasCell key={d} v={c.roas[d]} status={c.status[d]} />)}
+            <td className="num">{money(c.convValue)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

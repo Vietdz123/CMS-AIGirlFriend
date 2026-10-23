@@ -3,7 +3,7 @@ import { Role } from '@prisma/client';
 import { IsOptional, IsString } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
-import { allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, listCampaigns } from '../common/ad-campaigns';
+import { allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, cohortRoasCampaigns, listCampaigns } from '../common/ad-campaigns';
 import { isIsoDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { GOOGLE_SOURCE, GoogleAdsSyncService } from './google-ads-sync.service';
@@ -115,6 +115,20 @@ export class GoogleAdsController {
     return cohortRoas(this.prisma, {
       from: q.from,
       to: q.to,
+      today: todayIn(account?.timeZone ?? 'UTC'),
+      campaignIds: q.campaignIds?.split(',').filter(Boolean),
+      storeIds: q.storeIds?.split(',').filter(Boolean),
+      allowedAppIds: await this.access.allowedAppIds(user),
+    });
+  }
+
+  /** Các chiến dịch chạy trong 1 ngày của bảng ROAS theo ngày. Query: date (YYYY-MM-DD), campaignIds, storeIds. */
+  @Get('roas-cohort/campaigns')
+  async roasCohortCampaigns(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
+    if (!isIsoDate(q.date)) throw new BadRequestException('date phải có dạng YYYY-MM-DD');
+    const account = await this.prisma.gadsAccount.findFirst({ select: { timeZone: true } });
+    return cohortRoasCampaigns(this.prisma, {
+      date: q.date,
       today: todayIn(account?.timeZone ?? 'UTC'),
       campaignIds: q.campaignIds?.split(',').filter(Boolean),
       storeIds: q.storeIds?.split(',').filter(Boolean),

@@ -1,9 +1,9 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { ArrayNotEmpty, IsArray, IsOptional, IsString, MinLength } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
-import { allowedAdAccountIds, campaignPackages, listCampaigns } from '../common/ad-campaigns';
+import { allowedAdAccountIds, campaignDaily, campaignPackages, listCampaigns } from '../common/ad-campaigns';
 import { encrypt } from '../common/crypto';
 import { isIsoDate } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
@@ -121,6 +121,21 @@ export class FacebookController {
       storeIds: q.storeIds?.split(',').filter(Boolean),
       allowedAppIds: await this.access.allowedAppIds(user),
     });
+  }
+
+  /** Số liệu từng ngày của 1 chiến dịch: spend, installs, CPI, budget/ngày. */
+  @Get('campaigns/:id/daily')
+  async daily(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query() q: Record<string, string | undefined>) {
+    if (!isIsoDate(q.from) || !isIsoDate(q.to) || q.from > q.to) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD và from <= to');
+    }
+    // Người không phải admin chỉ xem được chiến dịch ghép với app được gán.
+    const allowed = await this.access.allowedAppIds(user);
+    if (allowed !== null) {
+      const visible = await listCampaigns(this.prisma, 'facebook', { allowedAppIds: allowed });
+      if (!visible.some((c) => c.id === id)) throw new ForbiddenException('Không có quyền xem chiến dịch này');
+    }
+    return campaignDaily(this.prisma, 'facebook', id, q.from, q.to);
   }
 
   @Get('packages')

@@ -10,7 +10,7 @@ import { SearchSelect } from './SearchSelect';
 /**
  * Bảng "Chiến dịch → App" dùng chung cho Facebook và Google Ads: lọc theo ngày + package, chi phí USD kèm
  * tiền gốc. Admin chọn app bằng tay cho chiến dịch không ghép tự động được; người khác chỉ xem.
- * Với Google Ads (withRoas): thêm conversion value + ROAS do Google báo, bấm vào chiến dịch để xem theo ngày.
+ * Bấm vào chiến dịch để xem theo ngày (có budget/ngày). Google Ads (withRoas): thêm conversion value + ROAS do Google báo.
  */
 export function CampaignTable({ apiBase, currency, withRoas }: {
   /** '/facebook' | '/google-ads' */
@@ -55,7 +55,8 @@ export function CampaignTable({ apiBase, currency, withRoas }: {
         Chiến dịch quảng bá app được ghép tự động theo package name.
         {can('ADMIN') && ' Chiến dịch không ghép được thì chọn app bằng tay, nếu không chi phí sẽ nằm ở dòng "Chưa ghép app".'}
         {' '}Chi phí đã quy đổi sang USD theo tỷ giá từng ngày.
-        {withRoas && ' Conv. value và ROAS là số Google Ads báo (giống cột trên Google Ads). Bấm vào chiến dịch để xem theo ngày.'}
+        {withRoas && ' Conv. value và ROAS là số Google Ads báo (giống cột trên Google Ads).'}
+        {' '}Bấm vào chiến dịch để xem theo ngày.
       </p>
       <div className="filters">
         <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
@@ -83,10 +84,9 @@ export function CampaignTable({ apiBase, currency, withRoas }: {
           <tbody>
             {rows.map((c) => (
               <Fragment key={c.id}>
-                <tr className={withRoas ? 'clickable' : undefined}
-                  onClick={withRoas ? () => setExpanded(expanded === c.id ? null : c.id) : undefined}>
+                <tr className="clickable" onClick={() => setExpanded(expanded === c.id ? null : c.id)}>
                   <td className="label-cell" title={`${c.name}\n${c.id}`}>
-                    {withRoas && <span className="muted">{expanded === c.id ? '▾ ' : '▸ '}</span>}
+                    <span className="muted">{expanded === c.id ? '▾ ' : '▸ '}</span>
                     {c.name}
                   </td>
                   <td className="muted">{c.storeId ?? '—'}</td>
@@ -108,10 +108,11 @@ export function CampaignTable({ apiBase, currency, withRoas }: {
                     )}
                   </td>
                 </tr>
-                {withRoas && expanded === c.id && (
+                {expanded === c.id && (
                   <tr className="detail-row">
                     <td colSpan={columns}>
-                      <CampaignDaily apiBase={apiBase} campaignId={c.id} range={range} showLocal={showLocal} localFmt={localFmt} />
+                      <CampaignDaily apiBase={apiBase} campaignId={c.id} range={range} showLocal={showLocal} localFmt={localFmt}
+                        withRoas={withRoas} />
                     </td>
                   </tr>
                 )}
@@ -140,12 +141,13 @@ export function CampaignTable({ apiBase, currency, withRoas }: {
 }
 
 /** Bảng từng ngày của 1 chiến dịch, trong cùng khoảng ngày đang lọc. */
-function CampaignDaily({ apiBase, campaignId, range, showLocal, localFmt }: {
+function CampaignDaily({ apiBase, campaignId, range, showLocal, localFmt, withRoas }: {
   apiBase: string;
   campaignId: string;
   range: { from: string; to: string };
   showLocal: boolean;
   localFmt: (v: number) => string;
+  withRoas?: boolean;
 }) {
   const daily = useQuery({
     queryKey: ['campaigns', apiBase, 'daily', campaignId, range.from, range.to],
@@ -161,28 +163,34 @@ function CampaignDaily({ apiBase, campaignId, range, showLocal, localFmt }: {
       <thead>
         <tr>
           <th>Ngày</th>
+          <th className="num" title="Budget/ngày của chiến dịch (mức cuối ngày)">Budget/ngày</th>
+          {showLocal && <th className="num">Budget gốc</th>}
           <th className="num">Chi phí (USD)</th>
           {showLocal && <th className="num">Chi phí gốc</th>}
           <th className="num">Impressions</th>
           <th className="num">Clicks</th>
           <th className="num">Installs</th>
           <th className="num">CPI</th>
-          <th className="num">Conv. value</th>
-          <th className="num">ROAS</th>
+          {withRoas && <th className="num">Conv. value</th>}
+          {withRoas && <th className="num">ROAS</th>}
         </tr>
       </thead>
       <tbody>
         {daily.data.map((d) => (
           <tr key={d.date}>
             <td>{d.date}</td>
+            <td className="num" title={d.budget === null ? 'Chưa ghi nhận được budget của ngày này' : undefined}>
+              {d.budget === null ? '—' : money(d.budget)}
+            </td>
+            {showLocal && <td className="num muted">{d.localBudget === null ? '—' : localFmt(d.localBudget)}</td>}
             <td className="num">{money(d.spend)}</td>
             {showLocal && <td className="num muted">{localFmt(d.localSpend)}</td>}
             <td className="num">{num(d.impressions)}</td>
             <td className="num">{num(d.clicks)}</td>
             <td className="num">{num(d.installs)}</td>
             <td className="num">{d.cpi === null ? '—' : money(d.cpi)}</td>
-            <td className="num">{money(d.convValue)}</td>
-            <td className="num">{d.roas === null ? '—' : ratio(d.roas)}</td>
+            {withRoas && <td className="num">{money(d.convValue)}</td>}
+            {withRoas && <td className="num">{d.roas === null ? '—' : ratio(d.roas)}</td>}
           </tr>
         ))}
       </tbody>

@@ -5,6 +5,7 @@ import { GadsAccount, Prisma } from '@prisma/client';
 import { OAuth2Client } from 'google-auth-library';
 import { AdmobApiService } from '../admob/admob-api.service';
 import { batches, minDate } from '../common/batches';
+import { saveBudgetDays } from '../common/budget-history';
 import { decrypt } from '../common/crypto';
 import { FxService } from '../common/fx.service';
 import { addDays, toDbDate, todayIn } from '../common/dates';
@@ -19,6 +20,8 @@ const CHUNK_DAYS = 30;
 /** ROAS D30 cần conversion value phát sinh tới 30 ngày sau ngày tương tác; thêm vài ngày cho conversion báo trễ. */
 const LAG_WINDOW_DAYS = 34;
 const LAG_CHUNK_DAYS = 34;
+/** Google chỉ giữ lịch sử thay đổi khoảng 30 ngày, nên chỉ dựng lại budget/ngày cho chừng ấy ngày. */
+const BUDGET_DAYS = 30;
 
 @Injectable()
 export class GoogleAdsSyncService {
@@ -149,9 +152,17 @@ export class GoogleAdsSyncService {
       );
       if (lagError) this.logger.warn(`Google Ads sync ${accountId}: ${lagError}`);
 
+      // Budget/ngày cũng là phần phụ, lỗi không làm hỏng chi phí.
+      const budgetError = await this.syncBudgets(client, account, to).then(
+        () => null,
+        (e: any) => `Budget: ${e?.message ?? String(e)}`,
+      );
+      if (budgetError) this.logger.warn(`Google Ads sync ${accountId}: ${budgetError}`);
+      const sideError = [lagError, budgetError].filter(Boolean).join(' · ') || null;
+
       await this.prisma.gadsAccount.update({
         where: { id: accountId },
-        data: { lastSyncedAt: new Date(), lastError: lagError?.slice(0, 1000) ?? null },
+        data: { lastSyncedAt: new Date(), lastError: sideError?.slice(0, 1000) ?? null },
       });
       this.logger.log(`Google Ads sync ${accountId} ${from}..${to}: ${rowCount} rows`);
     } catch (e: any) {
@@ -160,6 +171,31 @@ export class GoogleAdsSyncService {
       await this.prisma.gadsAccount.update({ where: { id: accountId }, data: { lastError: message.slice(0, 1000) } });
       throw e;
     }
+  }
+
+  /**
+   * Budget/ngày của từng chiến dịch cho BUDGET_DAYS ngày gần nhất: budget hiện tại + lịch sử thay đổi của Google
+   * (chỉ giữ khoảng 30 ngày), mức cuối ngày. Ngày cũ hơn giữ nguyên dòng đã ghi từ các lần đồng bộ trước.
+   */
+  private async syncBudgets(client: OAuth2Client, account: GadsAccount, to: string) {
+    const from = addDays(to, -(BUDGET_DAYS - 1));
+    const [budgets, changes] = await Promise.all([
+      this.api.campaignBudgets(client, account.id, account.loginCustomerId),
+      this.api.budgetChanges(client, account.id, account.loginCustomerId, from, to),
+    ]);
+    // Lịch sử thay đổi theo budget resource; 1 budget có thể dùng chung cho nhiều chiến dịch.
+    const campaignsByBudget = new Map<string, string[]>();
+    for (const b of budgets) campaignsByBudget.set(b.budgetResource, [...(campaignsByBudget.get(b.budgetResource) ?? []), b.campaignId]);
+    await saveBudgetDays(this.prisma, {
+      source: GOOGLE_SOURCE,
+      accountId: account.id,
+      currency: account.currencyCode,
+      from,
+      to,
+      current: new Map(budgets.map((b) => [b.campaignId, b.micros])),
+      changes: changes.flatMap((c) => (campaignsByBudget.get(c.budgetResource) ?? []).map((campaignId) => ({ ...c, campaignId }))),
+      toUsd: await this.fx.converter(account.currencyCode, from, to),
+    });
   }
 
   /**
