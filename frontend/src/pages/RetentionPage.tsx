@@ -5,10 +5,12 @@ import { api, post, qs } from '../api';
 import { useAuth } from '../auth';
 import { DateRangePicker } from '../components/DateRangePicker';
 import { SearchSelect } from '../components/SearchSelect';
-import { countryName, countryOptions, daysAgo, num, relative } from '../format';
-import type { RetentionCompare, RetentionDay, RetentionStatus } from '../types';
+import { countryName, countryOptions, daysAgo, money, num, relative } from '../format';
+import type { RetentionCompare, RetentionDay, RetentionStatus, RevenueByInstall } from '../types';
 
 const DEFAULT_DAYS = [1, 3, 7, 14];
+/** Nguồn lọc sẵn khi mở trang (firstUserSource của người dùng đến từ Google Ads). */
+const DEFAULT_SOURCE = 'google';
 const EXTRA_DAYS = [40, 45, 60];
 
 /** Tên dễ đọc cho firstUserSource của GA4. */
@@ -21,6 +23,7 @@ const SOURCE_LABELS: Record<string, string> = {
   '(not set)': 'Không rõ',
 };
 export const sourceLabel = (s: string) => SOURCE_LABELS[s] ?? s;
+const SPEND_SOURCES: Record<string, string> = { facebook: 'Facebook', google: 'Google Ads' };
 const versionLabel = (v: string) => (v === 'mixed' ? 'Nhiều phiên bản' : v === '?' ? 'Không rõ' : v);
 
 const pct1 = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -35,7 +38,6 @@ export function RetentionPage() {
   const days = params.get('days') ? split(params.get('days')).map(Number).filter((n) => n >= 0) : DEFAULT_DAYS;
   const range = { from: params.get('from') ?? daysAgo(30), to: params.get('to') ?? daysAgo(1) };
   const countries = split(params.get('countries'));
-  const sources = split(params.get('sources'));
   const versions = split(params.get('versions'));
   const update = (patch: Record<string, string | string[] | number[]>) => {
     const p = new URLSearchParams(params);
@@ -46,8 +48,6 @@ export function RetentionPage() {
     }
     setParams(p, { replace: true });
   };
-  const segmentQuery = { countries, sources, versions };
-  const q = qs({ ...range, ...segmentQuery });
 
   const status = useQuery({
     queryKey: ['retention', 'status'],
@@ -59,6 +59,14 @@ export function RetentionPage() {
     queryKey: ['retention', 'sources', synced],
     queryFn: () => api<{ source: string; newUsers: number }[]>('/retention/sources'),
   });
+  // Nguồn mặc định là Google (nếu có dữ liệu Google); chọn "Tất cả" lưu sources=all trên link để không bị đặt lại.
+  const sourceParam = params.get('sources');
+  const sourcesReady = sourceParam !== null || sourceList.isSuccess;
+  const sources = sourceParam === 'all' ? []
+    : sourceParam !== null ? split(sourceParam)
+    : sourceList.data?.some((x) => x.source === DEFAULT_SOURCE) ? [DEFAULT_SOURCE] : [];
+  const segmentQuery = { countries, sources, versions };
+  const q = qs({ ...range, ...segmentQuery });
   const versionList = useQuery({
     queryKey: ['retention', 'versions', synced],
     queryFn: () => api<{ version: string; newUsers: number }[]>('/retention/versions'),
@@ -70,6 +78,8 @@ export function RetentionPage() {
   const rows = useQuery({
     queryKey: ['retention', 'by-date', q, synced],
     queryFn: () => api<RetentionDay[]>(`/retention/by-date?${q}`),
+    // Chờ biết nguồn mặc định để không tải bảng 2 lần.
+    enabled: sourcesReady,
   });
   const sync = useMutation({
     mutationFn: () => post('/retention/sync', {}),
@@ -123,7 +133,7 @@ export function RetentionPage() {
         </label>
         <label>
           Nguồn
-          <SearchSelect value={sources} onChange={(v) => update({ sources: v })} allLabel="Tất cả" placeholder="Gõ nguồn…" width={200}
+          <SearchSelect value={sources} onChange={(v) => update({ sources: v.length ? v : 'all' })} allLabel="Tất cả" placeholder="Gõ nguồn…" width={200}
             options={(sourceList.data ?? []).map((s) => ({ value: s.source, label: sourceLabel(s.source), keywords: s.source }))} />
         </label>
         <label>
@@ -178,7 +188,11 @@ export function RetentionPage() {
         </table>
       </div>
 
-      <ComparePanel segmentQuery={segmentQuery} defaultDay={sortedDays.find((d) => d > 0) ?? 1} synced={synced} />
+      <RevenueByInstallTable synced={synced} />
+
+      {sourcesReady && (
+        <ComparePanel segmentQuery={segmentQuery} defaultDay={sortedDays.find((d) => d > 0) ?? 1} synced={synced} />
+      )}
     </>
   );
 }
@@ -317,6 +331,116 @@ function ComparePanel({ segmentQuery, defaultDay, synced }: {
           </div>
         </>
       )}
+    </>
+  );
+}
+
+/**
+ * Doanh thu quảng cáo của từng ngày đến từ người dùng cài ngày nào (GA4). Ngày cài chiếm ≤ 1% tổng doanh thu của
+ * khoảng đang xem được gộp vào cột "Trước đó".
+ */
+function RevenueByInstallTable({ synced }: { synced?: string | null }) {
+  const [range, setRange] = useState({ from: daysAgo(13), to: daysAgo(0) });
+  const data = useQuery({
+    queryKey: ['retention', 'revenue-by-install', range.from, range.to, synced],
+    queryFn: () => api<RevenueByInstall>(`/retention/revenue-by-install?${qs(range)}`),
+  });
+  const r = data.data;
+  const shortDate = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  const label = (c: string) => (c === 'earlier' ? `Trước ${r?.earlierBefore ? shortDate(r.earlierBefore) : ''}` : c === 'unknown' ? 'Không rõ' : shortDate(c));
+  const colTotal = (c: string) => r?.rows.reduce((s, row) => s + (row.cells[c]?.revenue ?? 0), 0) ?? 0;
+  const grand = r?.rows.reduce((s, row) => s + row.total, 0) ?? 0;
+  const spendTotal = r ? Object.values(r.spend).reduce((s, x) => s + x.total, 0) : 0;
+  const googleValueTotal = r ? Object.values(r.spend).reduce((s, x) => s + x.googleValue, 0) : 0;
+  const spendTitle = (bySource: Record<string, number>) =>
+    Object.entries(bySource).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${SPEND_SOURCES[k] ?? k}: ${money(v)}`).join('\n') || undefined;
+  const recent = new Set([daysAgo(0), daysAgo(1)]);
+
+  return (
+    <>
+      <h2>Doanh thu theo ngày cài</h2>
+      <p className="small muted">
+        Doanh thu quảng cáo của mỗi ngày đến từ người dùng cài ngày nào (GA4, lệch nhẹ so với AdMob). Ngày cài chiếm ≤ 1%
+        doanh thu của khoảng đang xem được gộp vào cột "Trước". Hôm nay và hôm qua chưa đủ số.
+      </p>
+      <div className="filters">
+        <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
+      </div>
+      <div className="card table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Ngày</th>
+              <th className="num col-total">Tổng</th>
+              <th className="num" title="Tỷ lệ doanh thu từ người cài trong chính ngày đó">% từ người mới</th>
+              {r?.columns.map((c) => <th key={c} className="num">{label(c)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {r && r.rows.length > 0 && (
+              <tr className="total-row highlight">
+                <td><b>Tổng ({r.rows.length} ngày)</b></td>
+                <td className="num col-total"><b>{money(grand)}</b></td>
+                <td className="num">
+                  <b>{grand ? pct1(r.rows.reduce((s, row) => s + (row.cells[row.date]?.revenue ?? 0), 0) / grand) : '—'}</b>
+                </td>
+                {r.columns.map((c) => <td key={c} className="num"><b>{money(colTotal(c))}</b></td>)}
+              </tr>
+            )}
+            {r && r.rows.length > 0 && (
+              <tr className="spend-row" title="Chi phí quảng cáo mọi kênh (Facebook, Google Ads…) trong ngày cài của từng cột">
+                <td><b>Spend</b></td>
+                <td className="num col-total"><b>{money(spendTotal)}</b></td>
+                <td />
+                {r.columns.map((c) => {
+                  const sp = r.spend[c];
+                  return (
+                    <td key={c} className="num" title={sp ? spendTitle(sp.bySource) : undefined}>
+                      {sp?.total ? money(sp.total) : <span className="muted">—</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
+            {r && r.rows.length > 0 && (
+              <tr className="spend-row" title="Doanh thu Google Ads tự ghi nhận (conversion value) cho ngày cài của từng cột">
+                <td>Rev Google Ads ghi nhận</td>
+                <td className="num col-total">{money(googleValueTotal)}</td>
+                <td />
+                {r.columns.map((c) => {
+                  const v = r.spend[c]?.googleValue;
+                  return <td key={c} className="num">{v ? money(v) : <span className="muted">—</span>}</td>;
+                })}
+              </tr>
+            )}
+            {r?.rows.map((row) => (
+              <tr key={row.date} className={recent.has(row.date) ? 'roas-partial' : undefined}
+                title={recent.has(row.date) ? 'Chưa đủ số: GA4 còn đang xử lý' : undefined}>
+                <td>{row.date}</td>
+                <td className="num col-total">{money(row.total)}</td>
+                <td className="num">{row.total ? pct1((row.cells[row.date]?.revenue ?? 0) / row.total) : '—'}</td>
+                {r.columns.map((c) => {
+                  const cell = row.cells[c];
+                  // Ngày cài sau ngày phát sinh doanh thu: không thể có số.
+                  if (c !== 'earlier' && c !== 'unknown' && c > row.date) return <td key={c} className="num muted" />;
+                  return (
+                    <td key={c} className={`num ${c === row.date ? 'cell-new' : ''}`}
+                      title={cell ? `${num(cell.users)} người dùng · ${row.total ? pct1(cell.revenue / row.total) : '—'}` : undefined}>
+                      {cell ? money(cell.revenue) : <span className="muted">—</span>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            {data.isLoading && <tr><td colSpan={3} className="center muted">Đang tải…</td></tr>}
+            {!data.isLoading && !r?.rows.length && (
+              <tr><td colSpan={3 + (r?.columns.length ?? 0)} className="center muted">
+                Chưa có dữ liệu. Bấm Update ở đầu trang để lấy từ GA4.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

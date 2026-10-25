@@ -136,6 +136,17 @@ export class GoogleAdsController {
     });
   }
 
+  /** ROAS theo giờ hôm nay của từng chiến dịch, lấy trực tiếp từ Google Ads (trễ tối đa 5 phút). */
+  @Get('hourly-today')
+  async hourlyToday(@CurrentUser() user: AuthUser) {
+    const data = await this.sync.hourlyToday();
+    // Người không phải admin chỉ thấy chiến dịch ghép với app được gán.
+    const allowed = await this.access.allowedAppIds(user);
+    if (allowed === null) return data;
+    const visible = new Set((await listCampaigns(this.prisma, 'google', { allowedAppIds: allowed })).map((c) => c.id));
+    return { ...data, campaigns: data.campaigns.filter((c) => visible.has(c.id)) };
+  }
+
   @Get('packages')
   async packages(@CurrentUser() user: AuthUser) {
     return campaignPackages(this.prisma, 'google', await this.access.allowedAppIds(user));

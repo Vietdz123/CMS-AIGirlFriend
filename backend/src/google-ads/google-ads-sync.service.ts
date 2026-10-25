@@ -7,6 +7,7 @@ import { AdmobApiService } from '../admob/admob-api.service';
 import { batches, minDate } from '../common/batches';
 import { saveBudgetDays } from '../common/budget-history';
 import { decrypt } from '../common/crypto';
+import { recordSpendSnapshots } from '../common/spend-history';
 import { FxService } from '../common/fx.service';
 import { addDays, toDbDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,11 +23,25 @@ const LAG_WINDOW_DAYS = 34;
 const LAG_CHUNK_DAYS = 34;
 /** Google chỉ giữ lịch sử thay đổi khoảng 30 ngày, nên chỉ dựng lại budget/ngày cho chừng ấy ngày. */
 const BUDGET_DAYS = 30;
+/** Bảng theo giờ hôm nay gọi thẳng Google Ads; giữ kết quả 5 phút (Google Ads cập nhật chi phí khoảng 15–60 phút/lần). */
+const HOURLY_CACHE_MS = 5 * 60_000;
+/** Click không hợp lệ: Google cập nhật chậm, giữ kết quả 1 giờ để không tốn quota API mỗi lần mở trang. */
+const INVALID_CACHE_MS = 60 * 60_000;
+
+export interface HourlyToday {
+  date: string;
+  currentHour: number;
+  fetchedAt: string;
+  campaigns: { id: string; name: string; hours: { hour: number; spend: number; value: number }[] }[];
+}
 
 @Injectable()
 export class GoogleAdsSyncService {
   private readonly logger = new Logger(GoogleAdsSyncService.name);
   private readonly running = new Set<string>();
+  private hourlyCache: { at: number; data: HourlyToday } | null = null;
+  private balanceCheckedAt = 0;
+  private readonly invalidCache = new Map<string, { at: number; data: Record<string, { clicks: number; invalidClicks: number }> }>();
 
   constructor(
     private prisma: PrismaService,
@@ -63,6 +78,63 @@ export class GoogleAdsSyncService {
     return started;
   }
 
+  /**
+   * Chi phí và conversion value theo giờ hôm nay của từng chiến dịch (USD), gọi thẳng Google Ads (không lưu DB).
+   * Kết quả giữ HOURLY_CACHE_MS để nhiều người mở trang không tốn thêm quota API.
+   */
+  async hourlyToday(): Promise<HourlyToday> {
+    if (this.hourlyCache && Date.now() - this.hourlyCache.at < HOURLY_CACHE_MS) return this.hourlyCache.data;
+    const accounts = await this.prisma.gadsAccount.findMany();
+    const campaigns: HourlyToday['campaigns'] = [];
+    let timeZone = 'UTC';
+    for (const account of accounts) {
+      timeZone = account.timeZone;
+      const today = todayIn(account.timeZone);
+      const client = this.oauth.clientFor(decrypt(account.refreshTokenEnc));
+      const toUsd = await this.fx.converter(account.currencyCode, today, today);
+      const usd = (micros: bigint) => Number(toUsd(today, micros)) / 1e6;
+      const byCampaign = new Map<string, (typeof campaigns)[number]>();
+      for (const r of await this.api.hourlyToday(client, account.id, account.loginCustomerId)) {
+        const c = byCampaign.get(r.campaignId) ?? { id: r.campaignId, name: r.campaignName, hours: [] };
+        c.hours.push({ hour: r.hour, spend: usd(r.costMicros), value: usd(r.valueMicros) });
+        byCampaign.set(r.campaignId, c);
+      }
+      campaigns.push(...byCampaign.values());
+    }
+    const now = new Date();
+    const data: HourlyToday = {
+      date: todayIn(timeZone),
+      // Giờ hiện tại theo múi giờ tài khoản: giờ này đang chạy, vài giờ gần nhất conversion value còn về trễ.
+      currentHour: Number(new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', hourCycle: 'h23' }).format(now)),
+      fetchedAt: now.toISOString(),
+      campaigns: campaigns.map((c) => ({ ...c, hours: c.hours.sort((a, b) => a.hour - b.hour) })),
+    };
+    this.hourlyCache = { at: Date.now(), data };
+    return data;
+  }
+
+  /**
+   * Click và click không hợp lệ theo ngày (cộng mọi tài khoản trong accountIds, null = mọi tài khoản), gọi thẳng
+   * Google Ads, giữ kết quả INVALID_CACHE_MS.
+   */
+  async invalidClicks(from: string, to: string, accountIds: string[] | null) {
+    const cacheKey = `${from}|${to}|${accountIds?.join(',') ?? '*'}`;
+    const hit = this.invalidCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < INVALID_CACHE_MS) return hit.data;
+    const accounts = await this.prisma.gadsAccount.findMany({ where: accountIds ? { id: { in: accountIds } } : {} });
+    const byDate: Record<string, { clicks: number; invalidClicks: number }> = {};
+    for (const a of accounts) {
+      const client = this.oauth.clientFor(decrypt(a.refreshTokenEnc));
+      for (const r of await this.api.invalidClicks(client, a.id, a.loginCustomerId, from, to)) {
+        const d = (byDate[r.date] ??= { clicks: 0, invalidClicks: 0 });
+        d.clicks += r.clicks;
+        d.invalidClicks += r.invalidClicks;
+      }
+    }
+    this.invalidCache.set(cacheKey, { at: Date.now(), data: byDate });
+    return byDate;
+  }
+
   @Cron('0 20,50 * * * *')
   async scheduledRecent() {
     await this.runForAll(RECENT_DAYS);
@@ -71,6 +143,66 @@ export class GoogleAdsSyncService {
   @Cron('0 45 3 * * *')
   async scheduledDaily() {
     await this.runForAll(14);
+  }
+
+  /**
+   * Lịch sử chi phí (trang Biến động chi phí): mỗi ngày 1 lần lúc 12:35 giờ VN, ngay sau lần đồng bộ 12:20, ghi số
+   * hiện tại của mọi ngày đã đủ 1,5 ngày trong cửa sổ đồng bộ (ngày nào không đổi thì không ghi).
+   */
+  @Cron('0 35 12 * * *', { timeZone: 'Asia/Ho_Chi_Minh' })
+  async recordSpendHistory() {
+    for (const a of await this.prisma.gadsAccount.findMany({ select: { id: true, timeZone: true } })) {
+      const yesterday = addDays(todayIn(a.timeZone), -1);
+      await recordSpendSnapshots(this.prisma, GOOGLE_SOURCE, a.id, addDays(yesterday, -(LAG_WINDOW_DAYS - 1)), yesterday)
+        .catch((e) => this.logger.warn(`Spend history ${a.id}: ${e?.message ?? e}`));
+    }
+    await this.recordBalances();
+  }
+
+  /**
+   * Ghi số dư (hạn mức, đã tiêu, tổng điều chỉnh) của mọi tài khoản nếu khác lần ghi trước. Chạy cùng lịch sử chi phí
+   * mỗi ngày và khi khởi động nếu chưa có lần ghi nào.
+   */
+  async recordBalances() {
+    for (const a of await this.prisma.gadsAccount.findMany()) {
+      try {
+        const client = this.oauth.clientFor(decrypt(a.refreshTokenEnc));
+        const b = await this.api.accountBalance(client, a.id, a.loginCustomerId);
+        if (!b) continue;
+        const last = await this.prisma.gadsBalanceSnapshot.findFirst({ where: { accountId: a.id }, orderBy: { capturedAt: 'desc' } });
+        if (last && last.limitMicros === b.limitMicros && last.servedMicros === b.servedMicros && last.adjustmentMicros === b.adjustmentMicros) continue;
+        await this.prisma.gadsBalanceSnapshot.create({ data: { accountId: a.id, currency: a.currencyCode, ...b } });
+      } catch (e: any) {
+        this.logger.warn(`Balance ${a.id}: ${e?.message ?? e}`);
+      }
+    }
+  }
+
+  /** Số dư hiện tại (gọi thẳng Google Ads, ghi lại nếu đổi) và lịch sử các lần ghi của các tài khoản trong accountIds. */
+  async balances(accountIds: string[] | null) {
+    // Mở trang thì lấy số mới, nhưng tối đa 10 phút/lần để không tốn quota API.
+    if (Date.now() - this.balanceCheckedAt > 10 * 60_000) {
+      this.balanceCheckedAt = Date.now();
+      await this.recordBalances();
+    }
+    const accounts = await this.prisma.gadsAccount.findMany({
+      where: accountIds ? { id: { in: accountIds } } : {},
+      select: { id: true, name: true, currencyCode: true },
+    });
+    const history = await this.prisma.gadsBalanceSnapshot.findMany({
+      where: { accountId: { in: accounts.map((a) => a.id) } },
+      orderBy: { capturedAt: 'asc' },
+    });
+    const n = (v: bigint) => Number(v) / 1e6;
+    return accounts.map((a) => {
+      const list = history.filter((h) => h.accountId === a.id).map((h) => ({
+        at: h.capturedAt.toISOString(),
+        limit: n(h.limitMicros),
+        served: n(h.servedMicros),
+        adjustment: n(h.adjustmentMicros),
+      }));
+      return { id: a.id, name: a.name, currency: a.currencyCode, current: list.at(-1) ?? null, history: list };
+    });
   }
 
   private async runForAll(days: number) {

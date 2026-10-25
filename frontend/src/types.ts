@@ -235,3 +235,53 @@ export interface CohortRoasCampaign {
   roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
   status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
 }
+
+/** Doanh thu quảng cáo theo ngày phát sinh x ngày cài; columns gồm ngày cài, "earlier" (gộp ≤ 1%) và "unknown". */
+export interface RevenueByInstall {
+  columns: string[];
+  earlierBefore: string | null;
+  /** Chi phí quảng cáo cả các kênh theo ngày cài (cột), USD; googleValue = doanh thu Google Ads tự ghi nhận. */
+  spend: Record<string, { total: number; bySource: Record<string, number>; googleValue: number }>;
+  rows: { date: string; total: number; cells: Record<string, { revenue: number; users: number }> }[];
+}
+
+/** ROAS theo giờ hôm nay của từng chiến dịch Google Ads (USD, giờ theo múi giờ tài khoản). */
+export interface GadsHourly {
+  date: string;
+  currentHour: number;
+  fetchedAt: string;
+  campaigns: { id: string; name: string; hours: { hour: number; spend: number; value: number }[] }[];
+}
+
+/** Số liệu chi phí của 1 ngày lần đầu CMS ghi nhận và hiện tại, kèm mọi phiên bản (USD). */
+export interface SpendChange {
+  date: string;
+  source: string;
+  /** Mốc gốc: lần ghi đầu tiên khi ngày đã qua 1,5 ngày; null khi chưa đủ. */
+  first: { spend: number; convValue: number; installs: number; at: string } | null;
+  latest: { spend: number; convValue: number; installs: number; at: string };
+  /** early = ghi khi ngày chưa đủ 1,5 ngày (số còn về thêm). */
+  versions: { at: string; spend: number; convValue: number; installs: number; early: boolean }[];
+}
+
+/** Click và click không hợp lệ (Google đã lọc, không tính tiền) của 1 ngày, Google Ads. */
+export interface InvalidClickDay {
+  date: string;
+  clicks: number;
+  invalidClicks: number;
+}
+
+/** Số dư tài khoản Google Ads theo tiền gốc: hạn mức đã nạp, đã tiêu, tổng điều chỉnh (tín dụng). */
+export interface GadsBalance {
+  id: string;
+  name: string;
+  currency: string;
+  current: GadsBalancePoint | null;
+  history: GadsBalancePoint[];
+}
+export interface GadsBalancePoint {
+  at: string;
+  limit: number;
+  served: number;
+  adjustment: number;
+}

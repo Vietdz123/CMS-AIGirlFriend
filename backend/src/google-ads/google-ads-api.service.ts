@@ -207,6 +207,60 @@ export class GoogleAdsApiService {
     }));
   }
 
+  /**
+   * Account budget đang hiệu lực (tài khoản nạp tiền / hạn mức): hạn mức, đã tiêu, tổng điều chỉnh, tiền gốc (micros).
+   * null khi tài khoản không có account budget (ví dụ thanh toán tự động không hạn mức).
+   */
+  async accountBalance(client: OAuth2Client, customerId: string, loginCustomerId: string) {
+    const rows = await this.search(client, customerId, loginCustomerId, `
+      SELECT account_budget.status, account_budget.approved_spending_limit_micros,
+             account_budget.approved_spending_limit_type, account_budget.amount_served_micros,
+             account_budget.total_adjustments_micros
+      FROM account_budget
+      WHERE account_budget.status = 'APPROVED'`);
+    if (!rows.length) return null;
+    // Có thể có nhiều account budget nối tiếp nhau; cộng lại thành số dư của cả tài khoản.
+    let limit = 0n;
+    let served = 0n;
+    let adjustment = 0n;
+    for (const r of rows) {
+      const b = r.accountBudget;
+      limit += BigInt(b.approvedSpendingLimitMicros ?? 0);
+      served += BigInt(b.amountServedMicros ?? 0);
+      adjustment += BigInt(b.totalAdjustmentsMicros ?? 0);
+    }
+    return { limitMicros: limit, servedMicros: served, adjustmentMicros: adjustment };
+  }
+
+  /** Click và click không hợp lệ (Google đã lọc, không tính tiền) theo ngày của cả tài khoản. */
+  async invalidClicks(client: OAuth2Client, customerId: string, loginCustomerId: string, from: string, to: string) {
+    const rows = await this.search(client, customerId, loginCustomerId, `
+      SELECT segments.date, metrics.clicks, metrics.invalid_clicks
+      FROM customer
+      WHERE segments.date BETWEEN '${from}' AND '${to}'`);
+    return rows.map((r) => ({
+      date: r.segments.date as string,
+      clicks: Number(r.metrics.clicks ?? 0),
+      invalidClicks: Number(r.metrics.invalidClicks ?? 0),
+    }));
+  }
+
+  /** Chi phí, installs, conversion value theo giờ hôm nay (múi giờ tài khoản) của từng chiến dịch, tiền gốc (micros). */
+  async hourlyToday(client: OAuth2Client, customerId: string, loginCustomerId: string) {
+    const rows = await this.search(client, customerId, loginCustomerId, `
+      SELECT campaign.id, campaign.name, segments.hour, metrics.cost_micros, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date DURING TODAY AND metrics.impressions > 0`);
+    return rows.map((r) => ({
+      campaignId: String(r.campaign.id),
+      campaignName: String(r.campaign.name),
+      hour: Number(r.segments.hour ?? 0),
+      costMicros: BigInt(r.metrics.costMicros ?? 0),
+      // conversions_value là số thực theo tiền tệ tài khoản (không phải micros).
+      valueMicros: BigInt(Math.round(Number(r.metrics.conversionsValue ?? 0) * 1e6)),
+    }));
+  }
+
   /** Budget/ngày hiện tại của từng chiến dịch (chỉ budget kiểu DAILY), tiền gốc của tài khoản (micros). */
   async campaignBudgets(client: OAuth2Client, customerId: string, loginCustomerId: string) {
     const rows = await this.search(client, customerId, loginCustomerId, `

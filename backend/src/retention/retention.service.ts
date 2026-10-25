@@ -18,6 +18,10 @@ const PAGE_SIZE = 100000;
 const DOMINANT_SHARE = 0.9;
 /** Ô có nhiều phiên bản trong ngày cài (không phiên bản nào chiếm DOMINANT_SHARE). */
 export const MIXED_VERSION = 'mixed';
+/** Số ngày gần nhất lấy lại doanh thu theo ngày cài mỗi lần đồng bộ. */
+const REVENUE_DAYS = 14;
+/** Cột ngày cài chiếm ≤ ngưỡng này trên tổng doanh thu của khoảng đang xem thì gộp vào cột "trước đó". */
+const MERGE_SHARE = 0.01;
 /** Mốc trả về cho bảng theo nước (Ranking Finance). */
 const COUNTRY_DAYS = [1, 3, 7, 14, 30] as const;
 
@@ -117,6 +121,13 @@ export class RetentionService {
         ]);
         rowCount += curves.length;
       }
+      // Doanh thu quảng cáo theo ngày cài: lấy lại REVENUE_DAYS ngày gần nhất (GA4 còn điều chỉnh vài ngày sau).
+      const revFrom = addDays(todayIn(timeZone), -(REVENUE_DAYS - 1));
+      const revenue = await this.fetchRevenueByInstallDate(revFrom, todayIn(timeZone));
+      await this.prisma.$transaction([
+        this.prisma.revenueCohortStat.deleteMany({ where: { date: { gte: toDbDate(revFrom) } } }),
+        ...batches(revenue).map((d) => this.prisma.revenueCohortStat.createMany({ data: d })),
+      ]);
       this.lastSyncedAt = new Date();
       this.lastError = null;
       this.logger.log(`GA4 retention ${from}..${to}: ${rowCount} rows`);
@@ -184,6 +195,90 @@ export class RetentionService {
       out.set(key, row);
     }
     return [...out.values()];
+  }
+
+  /** Doanh thu quảng cáo (GA4 totalAdRevenue) mỗi ngày, chia theo ngày cài (firstSessionDate) của người dùng. */
+  private async fetchRevenueByInstallDate(from: string, to: string): Promise<Prisma.RevenueCohortStatCreateManyInput[]> {
+    const rows = await this.runReport({
+      dateRanges: [{ startDate: from, endDate: to }],
+      dimensions: [{ name: 'date' }, { name: 'firstSessionDate' }],
+      metrics: [{ name: 'totalAdRevenue' }, { name: 'activeUsers' }],
+    });
+    const ymd = (v: string) => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+    return rows
+      .map((r) => {
+        const [date, first] = r.dimensionValues.map((v) => v.value);
+        return {
+          date: toDbDate(ymd(date)),
+          installDate: /^\d{8}$/.test(first) ? toDbDate(ymd(first)) : null,
+          revenueMicros: BigInt(Math.round(Number(r.metricValues[0].value) * 1e6)),
+          users: Number(r.metricValues[1].value),
+        };
+      })
+      .filter((r) => r.revenueMicros > 0n || r.users > 0);
+  }
+
+  /**
+   * Ma trận doanh thu theo ngày cài: mỗi dòng là 1 ngày phát sinh doanh thu, mỗi cột là 1 ngày cài. Ngày cài chiếm
+   * ≤ 1% tổng doanh thu của khoảng đang xem được gộp vào cột "trước đó" (mọi ngày cài cũ hơn cột nhỏ nhất còn giữ).
+   */
+  async revenueByInstallDate(q: { from: string; to: string }) {
+    const rows = await this.prisma.revenueCohortStat.findMany({
+      where: { date: { gte: toDbDate(q.from), lte: toDbDate(q.to) } },
+      select: { date: true, installDate: true, revenueMicros: true, users: true },
+    });
+    const key = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : 'unknown');
+    const total = rows.reduce((s, r) => s + Number(r.revenueMicros), 0);
+    const byInstall = new Map<string, number>();
+    for (const r of rows) byInstall.set(key(r.installDate), (byInstall.get(key(r.installDate)) ?? 0) + Number(r.revenueMicros));
+
+    // Giữ cột từ ngày cài mới nhất trở về, dừng ở ngày đầu tiên chiếm ≤ 1%: ngày đó và mọi ngày cũ hơn gộp thành "trước đó".
+    const dates = [...byInstall.keys()].filter((k) => k !== 'unknown').sort().reverse();
+    const kept: string[] = [];
+    for (const d of dates) {
+      if (total && byInstall.get(d)! / total <= MERGE_SHARE) break;
+      kept.push(d);
+    }
+    const keep = new Set(kept);
+    const oldest = kept.at(-1);
+    const column = (install: string) => (install === 'unknown' ? 'unknown' : keep.has(install) ? install : 'earlier');
+
+    const days = new Map<string, { date: string; total: number; cells: Record<string, { revenue: number; users: number }> }>();
+    for (const r of rows) {
+      const date = key(r.date);
+      const d = days.get(date) ?? { date, total: 0, cells: {} };
+      const col = column(key(r.installDate));
+      const cell = (d.cells[col] ??= { revenue: 0, users: 0 });
+      const rev = Number(r.revenueMicros) / 1e6;
+      cell.revenue += rev;
+      cell.users += r.users;
+      d.total += rev;
+      days.set(date, d);
+    }
+    // Chi phí quảng cáo cả các kênh (Facebook, Google Ads…) của từng ngày cài đang hiện thành cột, USD.
+    const spendRows = kept.length
+      ? await this.prisma.adSpendStat.groupBy({
+          by: ['date', 'source'],
+          where: { date: { gte: toDbDate(oldest!), lte: toDbDate(kept[0]) } },
+          _sum: { spendMicros: true, convValueMicros: true },
+        })
+      : [];
+    // googleValue: doanh thu Google Ads tự ghi nhận (conversion value) cho click/cài của ngày đó.
+    const spend: Record<string, { total: number; bySource: Record<string, number>; googleValue: number }> = {};
+    for (const r of spendRows) {
+      const v = Number(r._sum.spendMicros ?? 0) / 1e6;
+      const s = (spend[key(r.date)] ??= { total: 0, bySource: {}, googleValue: 0 });
+      s.total += v;
+      s.bySource[r.source] = (s.bySource[r.source] ?? 0) + v;
+      if (r.source === 'google') s.googleValue += Number(r._sum.convValueMicros ?? 0) / 1e6;
+    }
+    const used = new Set([...days.values()].flatMap((d) => Object.keys(d.cells)));
+    return {
+      columns: [...kept, ...(used.has('earlier') ? ['earlier'] : []), ...(used.has('unknown') ? ['unknown'] : [])],
+      earlierBefore: oldest ?? null,
+      spend,
+      rows: [...days.values()].sort((a, b) => b.date.localeCompare(a.date)),
+    };
   }
 
   private async runReport(body: Record<string, unknown>): Promise<Ga4Row[]> {

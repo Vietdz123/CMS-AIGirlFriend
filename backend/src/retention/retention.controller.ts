@@ -51,6 +51,12 @@ export class RetentionController {
     return this.retention.compare({ a: range(q.aFrom, q.aTo), b: range(q.bFrom, q.bTo), day, by, ...this.segments(q) });
   }
 
+  /** Doanh thu quảng cáo theo ngày phát sinh x ngày cài. Query: from, to (ngày phát sinh doanh thu). */
+  @Get('revenue-by-install')
+  revenueByInstall(@Query() q: Q) {
+    return this.retention.revenueByInstallDate(range(q.from, q.to));
+  }
+
   @Get('sources')
   sources() {
     return this.retention.sources();

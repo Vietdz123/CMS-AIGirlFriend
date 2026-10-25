@@ -300,3 +300,45 @@ model RetentionInstallVersion {
   @@unique([date, country, source, appVersion])
   @@index([date])
 }
+
+/// Doanh thu quảng cáo (GA4 totalAdRevenue, USD) của 1 ngày chia theo ngày cài (firstSessionDate) của người dùng.
+/// installDate null = GA4 không có ngày cài ("(not set)").
+model RevenueCohortStat {
+  id            BigInt    @id @default(autoincrement())
+  date          DateTime  @db.Date // ngày phát sinh doanh thu
+  installDate   DateTime? @db.Date
+  revenueMicros BigInt
+  users         Int
+
+  @@index([date])
+}
+
+/// Lịch sử số liệu chi phí Google Ads của từng ngày: mỗi lần đồng bộ thấy tổng của ngày (theo tài khoản) khác lần ghi trước
+/// thì thêm 1 dòng. Dùng để xem Google điều chỉnh chi phí, conversion value của ngày cũ thế nào.
+model SpendSnapshot {
+  id              BigInt   @id @default(autoincrement())
+  source          String // google
+  accountId       String
+  date            DateTime @db.Date
+  spendMicros     BigInt // USD
+  convValueMicros BigInt // USD
+  installs        BigInt
+  capturedAt      DateTime @default(now())
+
+  @@index([source, accountId, date, capturedAt])
+  @@index([date])
+}
+
+/// Số dư tài khoản Google Ads (account budget) ghi mỗi ngày khi có thay đổi: hạn mức đã nạp, đã tiêu, tổng điều chỉnh
+/// (tín dụng Google cộng / trừ vào tài khoản). Tiền gốc của tài khoản (micros).
+model GadsBalanceSnapshot {
+  id               BigInt   @id @default(autoincrement())
+  accountId        String
+  currency         String
+  limitMicros      BigInt // approved_spending_limit: tổng đã nạp / hạn mức
+  servedMicros     BigInt // amount_served: đã tiêu
+  adjustmentMicros BigInt // total_adjustments: tổng điều chỉnh (tín dụng)
+  capturedAt       DateTime @default(now())
+
+  @@index([accountId, capturedAt])
+}

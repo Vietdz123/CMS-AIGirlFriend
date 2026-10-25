@@ -4,6 +4,7 @@ import { api, del, post } from '../api';
 import { useAuth } from '../auth';
 import { CampaignTable } from '../components/CampaignTable';
 import { CohortRoasTable } from '../components/CohortRoasTable';
+import { HourlyRoasTable } from '../components/HourlyRoasTable';
 import { dateTime, relative } from '../format';
 import type { GadsAccount } from '../types';
 
@@ -117,6 +118,7 @@ export function GoogleAdsPage() {
         </p>
       )}
 
+      {!!accounts.data?.length && <HourlyRoasTable />}
       {!!accounts.data?.length && <CohortRoasTable />}
       {!!accounts.data?.length && (
         <CampaignTable apiBase="/google-ads" withRoas />

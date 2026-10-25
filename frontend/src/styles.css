@@ -230,6 +230,12 @@ legend { color: var(--muted); font-size: 13px; padding: 0 4px; }
 .table-search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
 tr.total-row td { background: #fafbfc; border-top: 1px solid var(--border); }
+tr.spend-row td { background: #fff8ec; border-bottom: 1px solid var(--border); }
+/* Hàng tổng và cột tổng nổi bật (bảng Doanh thu theo ngày cài); ô giao nhau đậm hơn. */
+tr.total-row.highlight td { background: #e8efff; }
+td.col-total, th.col-total { background: #f1f5ff; }
+tr.spend-row td.col-total { background: #fdf0d8; }
+tr.total-row.highlight td.col-total { background: #d6e2ff; }
 tr.detail-row > td { background: #f6f8fb; padding: 8px 14px 14px 32px; }
 tr.detail-row:hover td { background: #f6f8fb; }
 .daily-table { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
@@ -259,3 +265,5 @@ td.neg { color: var(--danger); }
 .day-grid .chip { padding: 4px 0; font-size: 12px; }
 .compare-summary { margin-bottom: 12px; }
 .compare-summary p { margin: 0 0 6px; }
+.cell-new { background: #eef4ff; font-weight: 600; }
+label.inline { flex-direction: row; align-items: center; gap: 6px; }
