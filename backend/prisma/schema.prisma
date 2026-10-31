@@ -235,7 +235,9 @@ model GadsCampaign {
 model FxRate {
   date     DateTime @db.Date
   currency String
-  rate     Float
+  rate     Float // số đơn vị tiền tệ cho 1 USD
+  /// true = admin sửa tay trên trang Tỷ giá (đồng bộ không ghi đè).
+  manual   Boolean  @default(false)
 
   @@id([date, currency])
 }
@@ -341,4 +343,41 @@ model GadsBalanceSnapshot {
   capturedAt       DateTime @default(now())
 
   @@index([accountId, capturedAt])
+}
+
+/// Doanh thu mua trong app (Google Play, báo cáo bán hàng ước tính trên Cloud Storage) đã cộng theo ngày tính tiền x
+/// sản phẩm x nước. Không lưu mã đơn hay thông tin người mua. Tiền gốc là tiền tệ người mua trả.
+model IapSaleStat {
+  id               BigInt   @id @default(autoincrement())
+  date             DateTime @db.Date // ngày tính tiền (Order Charged Date)
+  packageName      String
+  sku              String // mã sản phẩm / gói (coin_pack_9.99, waifu_monthly_plan…)
+  productType      String // inapp | subscription | …
+  country          String
+  currency         String
+  orders           Int // số đơn đã tính tiền
+  refunds          Int // số đơn hoàn tiền
+  /// Tiền hàng chưa thuế, đã trừ hoàn tiền.
+  priceLocalMicros BigInt
+  taxLocalMicros   BigInt
+  priceUsdMicros   BigInt
+  taxUsdMicros     BigInt
+
+  @@index([date])
+  @@index([packageName, date])
+}
+
+/// Doanh thu quảng cáo GA4 (totalAdRevenue, USD) của người dùng đến từ 1 chiến dịch (firstUserCampaign, nguồn google),
+/// theo ngày cài x số ngày sau khi cài (dayN = ngày phát sinh - ngày cài). Dùng cho ROAS DN theo GA4, không bị giới
+/// hạn bởi cửa sổ chuyển đổi 7 ngày của Google Ads.
+model GaCampaignRevenue {
+  id            BigInt   @id @default(autoincrement())
+  installDate   DateTime @db.Date
+  campaignId    String // firstUserCampaignId của GA4 ("(not set)" nếu không có)
+  campaignName  String
+  dayN          Int
+  revenueMicros BigInt
+  users         Int // người dùng mới của chiến dịch trong ngày cài (chỉ ghi ở dòng dayN = 0)
+
+  @@index([installDate])
 }

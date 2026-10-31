@@ -6,7 +6,9 @@ import { AppsPage } from './pages/AppsPage';
 import { BreakdownPage } from './pages/BreakdownPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { FacebookPage } from './pages/FacebookPage';
+import { FxPage } from './pages/FxPage';
 import { GoogleAdsPage } from './pages/GoogleAdsPage';
+import { IapPage } from './pages/IapPage';
 import { LoginPage } from './pages/LoginPage';
 import { MonetPage } from './pages/MonetPage';
 import { RankingFinancePage } from './pages/RankingFinancePage';
@@ -25,6 +27,7 @@ export function App() {
       <Route element={user ? <Layout /> : <Navigate to="/login" replace />}>
         <Route index element={<DashboardPage />} />
         <Route path="monet" element={<MonetPage />} />
+        <Route path="iap" element={<IapPage />} />
         <Route path="ranking-finance" element={<RankingFinancePage />} />
         <Route path="retention" element={<RetentionPage />} />
         <Route path="breakdown" element={<BreakdownPage />} />
@@ -33,6 +36,7 @@ export function App() {
         <Route path="facebook" element={<FacebookPage />} />
         <Route path="google-ads" element={<GoogleAdsPage />} />
         <Route path="spend-history" element={<SpendHistoryPage />} />
+        <Route path="fx" element={<FxPage />} />
         <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         <Route path="sync-history" element={<AdminOnly><SyncHistoryPage /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -55,6 +59,7 @@ function Layout() {
         <nav>
           <NavLink to="/" end>Tổng quan</NavLink>
           <NavLink to="/monet">Monet & UA</NavLink>
+          <NavLink to="/iap">IAP</NavLink>
           <NavLink to="/ranking-finance">Ranking Finance</NavLink>
           <NavLink to="/retention">Retention</NavLink>
           <NavLink to="/breakdown">Phân tích chi tiết</NavLink>
@@ -63,6 +68,7 @@ function Layout() {
           <NavLink to="/facebook">Facebook Ads</NavLink>
           <NavLink to="/google-ads">Google Ads</NavLink>
           <NavLink to="/spend-history">Biến động chi phí</NavLink>
+          <NavLink to="/fx">Tỷ giá</NavLink>
           {can('ADMIN') && <NavLink to="/users">Người dùng</NavLink>}
           {can('ADMIN') && <NavLink to="/sync-history">Lịch sử đồng bộ</NavLink>}
         </nav>

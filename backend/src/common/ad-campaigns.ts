@@ -145,6 +145,14 @@ export async function campaignDaily(prisma: PrismaService, source: 'facebook' | 
 
 /** Mốc ROAS kiểu cohort: DN = giá trị phát sinh từ ngày 0 tới hết ngày N (tức (N+1) x 24 giờ kể từ lúc tương tác). */
 export const ROAS_DAYS = [0, 1, 3, 7, 14, 30] as const;
+/** Mốc lớn nhất được chọn (GA4 chỉ lấy lại 45 ngày cài gần nhất). */
+export const MAX_ROAS_DAY = 44;
+
+/** Danh sách mốc người dùng chọn (ví dụ "0,2,11"); rỗng / sai = mặc định ROAS_DAYS. */
+export function parseRoasDays(v?: string): number[] {
+  const days = [...new Set((v ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n <= MAX_ROAS_DAY))];
+  return days.length ? days.sort((a, b) => a - b) : [...ROAS_DAYS];
+}
 
 /**
  * Các nhóm độ trễ của Google Ads (segments.conversion_lag_bucket) kèm cận trên tính theo ngày. Google chỉ chia
@@ -168,6 +176,35 @@ function lagWindow(n: number) {
 /** partial: cửa sổ chưa đóng, số là tích luỹ tới hiện tại và còn tăng; final: đã đủ ngày, số đã chốt. */
 export type RoasStatus = 'partial' | 'final';
 
+/**
+ * Doanh thu GA4 DN của người dùng từ các chiến dịch (theo ngày cài): DN = doanh thu từ ngày cài tới hết ngày cài + N.
+ * Trả về theo ngày cài và theo chiến dịch; GA4 gán doanh thu cả sau 7 ngày (khác cửa sổ chuyển đổi của Google Ads).
+ */
+async function gaRevenue(prisma: PrismaService, ids: string[], from: string, to: string, days: number[]) {
+  const cols = days.map((n) =>
+    Prisma.sql`SUM(CASE WHEN "dayN" <= ${n} THEN "revenueMicros" ELSE 0 END)::bigint AS ${Prisma.raw(`d${n}`)}`);
+  return prisma.$queryRaw<({ date: Date; campaign_id: string; total: bigint; users: number } & Record<string, bigint>)[]>`
+    SELECT "installDate" AS date, "campaignId" AS campaign_id, SUM("revenueMicros")::bigint AS total,
+           SUM(users)::int AS users, ${Prisma.join(cols)}
+    FROM "GaCampaignRevenue"
+    WHERE "campaignId" IN (${Prisma.join(ids)}) AND "installDate" BETWEEN ${from}::date AND ${to}::date
+    GROUP BY 1, 2`;
+}
+
+/** Cộng các dòng gaRevenue thành ROAS DN theo GA4 trên chi phí; null khi chưa có chi phí. */
+function gaRoas(rows: (Record<string, bigint> & { total: bigint; users: number })[], spend: number, days: number[]) {
+  const roas: Record<string, number | null> = {};
+  for (const n of days) {
+    const v = rows.reduce((s, r) => s + Number(r[`d${n}`] ?? 0), 0) / 1e6;
+    roas[`d${n}`] = spend ? v / spend : null;
+  }
+  return {
+    roas,
+    revenue: rows.reduce((s, r) => s + Number(r.total), 0) / 1e6,
+    users: rows.reduce((s, r) => s + Number(r.users ?? 0), 0),
+  };
+}
+
 export interface CohortRoasQuery {
   from: string;
   to: string;
@@ -176,6 +213,8 @@ export interface CohortRoasQuery {
   campaignIds?: string[];
   storeIds?: string[];
   allowedAppIds: string[] | null;
+  /** Mốc DN cần tính; mặc định ROAS_DAYS. */
+  days?: number[];
 }
 
 /**
@@ -189,10 +228,11 @@ export async function cohortRoas(prisma: PrismaService, q: CohortRoasQuery) {
   if (q.campaignIds?.length) ids = ids.filter((id) => q.campaignIds!.includes(id));
   if (!ids.length) return [];
 
-  const windows = ROAS_DAYS.map((n) => ({ n, ...lagWindow(n) }));
+  const days = q.days ?? [...ROAS_DAYS];
+  const windows = days.map((n) => ({ n, ...lagWindow(n) }));
   const dayCols = windows.map((w) =>
     Prisma.sql`SUM(CASE WHEN "lagBucket" IN (${Prisma.join(w.buckets)}) THEN "valueMicros" ELSE 0 END)::bigint AS ${Prisma.raw(`d${w.n}`)}`);
-  const [spendRows, lagRows] = await Promise.all([
+  const [spendRows, lagRows, gaRows] = await Promise.all([
     prisma.$queryRaw<{ date: Date; spend_micros: bigint; installs: bigint }[]>`
       SELECT date, SUM("spendMicros")::bigint AS spend_micros, SUM(installs)::bigint AS installs
       FROM "AdSpendStat"
@@ -205,12 +245,15 @@ export async function cohortRoas(prisma: PrismaService, q: CohortRoasQuery) {
       WHERE "campaignId" IN (${Prisma.join(ids)})
         AND date BETWEEN ${q.from}::date AND ${q.to}::date
       GROUP BY date`,
+    gaRevenue(prisma, ids, q.from, q.to, days),
   ]);
 
   const key = (d: Date) => d.toISOString().slice(0, 10);
   const lagByDate = new Map(lagRows.map((r) => [key(r.date), r]));
   const dates = [...new Set([...spendRows.map((r) => key(r.date)), ...lagRows.map((r) => key(r.date))])].sort().reverse();
   const spendByDate = new Map(spendRows.map((r) => [key(r.date), r]));
+  const gaByDate = new Map<string, typeof gaRows>();
+  for (const r of gaRows) gaByDate.set(key(r.date), [...(gaByDate.get(key(r.date)) ?? []), r]);
   const daysSince = (date: string) => Math.round((Date.parse(q.today) - Date.parse(date)) / 86_400_000);
 
   // Bỏ ngày không có chi phí lẫn doanh thu (chiến dịch tạm dừng, chi phí lẻ do làm tròn tỷ giá).
@@ -232,6 +275,7 @@ export async function cohortRoas(prisma: PrismaService, q: CohortRoasQuery) {
       // Mốc chưa đủ ngày vẫn trả số tích luỹ tới hiện tại (luôn D0 ≤ D3 ≤ … vì cửa sổ lồng nhau).
       status[k] = age <= w.days ? 'partial' : 'final';
     }
+    const ga = gaRoas(gaByDate.get(date) ?? [], spend, days);
     return {
       date,
       spend,
@@ -241,6 +285,10 @@ export async function cohortRoas(prisma: PrismaService, q: CohortRoasQuery) {
       value,
       roas,
       status,
+      /** ROAS DN theo doanh thu GA4 của người dùng từ các chiến dịch này, cài ngày đó (không giới hạn 7 ngày). */
+      gaRoas: ga.roas,
+      gaRevenue: ga.revenue,
+      gaUsers: ga.users,
     };
   });
 }
@@ -259,10 +307,11 @@ export async function cohortRoasCampaigns(prisma: PrismaService, q: Omit<CohortR
   if (q.campaignIds?.length) ids = ids.filter((id) => q.campaignIds!.includes(id));
   if (!ids.length) return [];
 
-  const windows = ROAS_DAYS.map((n) => ({ n, ...lagWindow(n) }));
+  const days = q.days ?? [...ROAS_DAYS];
+  const windows = days.map((n) => ({ n, ...lagWindow(n) }));
   const dayCols = windows.map((w) =>
     Prisma.sql`SUM(CASE WHEN "lagBucket" IN (${Prisma.join(w.buckets)}) THEN "valueMicros" ELSE 0 END)::bigint AS ${Prisma.raw(`d${w.n}`)}`);
-  const [lagRows, budgets] = await Promise.all([
+  const [lagRows, budgets, gaRows] = await Promise.all([
     prisma.$queryRaw<({ campaign_id: string; total: bigint } & Record<string, bigint>)[]>`
       SELECT "campaignId" AS campaign_id, SUM("valueMicros")::bigint AS total, ${Prisma.join(dayCols)}
       FROM "GadsConvLagStat"
@@ -272,7 +321,10 @@ export async function cohortRoasCampaigns(prisma: PrismaService, q: Omit<CohortR
       where: { source: 'google', campaignId: { in: ids }, date: new Date(`${q.date}T00:00:00Z`) },
       select: { campaignId: true, budgetMicros: true, localBudgetMicros: true },
     }),
+    gaRevenue(prisma, ids, q.date, q.date, days),
   ]);
+  const gaBy = new Map<string, typeof gaRows>();
+  for (const r of gaRows) gaBy.set(r.campaign_id, [...(gaBy.get(r.campaign_id) ?? []), r]);
   const lagBy = new Map(lagRows.map((r) => [r.campaign_id, r]));
   const budgetBy = new Map(budgets.map((b) => [b.campaignId, b]));
   const age = Math.round((Date.parse(q.today) - Date.parse(q.date)) / 86_400_000);
@@ -303,6 +355,10 @@ export async function cohortRoasCampaigns(prisma: PrismaService, q: Omit<CohortR
         convValue: c.convValue,
         roas,
         status,
+        ...(() => {
+          const ga = gaRoas(gaBy.get(id) ?? [], c.totalSpend, days);
+          return { gaRoas: ga.roas, gaRevenue: ga.revenue, gaUsers: ga.users };
+        })(),
       };
     })
     // Bỏ chiến dịch không chạy trong ngày đó (không chi phí, không install, không doanh thu).

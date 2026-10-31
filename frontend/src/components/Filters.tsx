@@ -12,6 +12,8 @@ export interface FilterValues {
   appIds: string[];
   formats: string[];
   countries: string[];
+  /** Kênh tính chi phí (google, facebook); rỗng = mọi kênh. Chỉ trang Monet & UA dùng. */
+  spendSources: string[];
 }
 
 const PRESETS = [
@@ -32,13 +34,16 @@ export function useFilters(): [FilterValues, (patch: Partial<FilterValues>) => v
     appIds: split(params.get('apps')),
     formats: split(params.get('formats')),
     countries: split(params.get('countries')),
+    spendSources: split(params.get('channels')),
   };
   const update = (patch: Partial<FilterValues>) => {
     const next = { ...values, ...patch };
     const p = new URLSearchParams(params);
     p.set('from', next.from);
     p.set('to', next.to);
-    for (const [key, list] of [['apps', next.appIds], ['formats', next.formats], ['countries', next.countries]] as const) {
+    for (const [key, list] of [
+      ['apps', next.appIds], ['formats', next.formats], ['countries', next.countries], ['channels', next.spendSources],
+    ] as const) {
       if (list.length) p.set(key, list.join(','));
       else p.delete(key);
     }

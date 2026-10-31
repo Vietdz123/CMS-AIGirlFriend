@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, post, qs } from '../api';
 import { useAuth } from '../auth';
 import { DateRangePicker } from '../components/DateRangePicker';
+import { DayPicker } from '../components/DayPicker';
 import { SearchSelect } from '../components/SearchSelect';
 import { countryName, countryOptions, daysAgo, money, num, relative } from '../format';
 import type { RetentionCompare, RetentionDay, RetentionStatus, RevenueByInstall } from '../types';
@@ -141,7 +142,8 @@ export function RetentionPage() {
           <SearchSelect value={versions} onChange={(v) => update({ versions: v })} allLabel="Tất cả" placeholder="Gõ phiên bản…" width={170}
             options={(versionList.data ?? []).map((v) => ({ value: v.version, label: versionLabel(v.version) }))} />
         </label>
-        <DayPicker value={sortedDays} max={status.data?.maxDay ?? 60} onChange={(d) => update({ days: d })} />
+        <DayPicker value={sortedDays} max={status.data?.maxDay ?? 60} defaults={DEFAULT_DAYS} extra={EXTRA_DAYS}
+          onChange={(d) => update({ days: d })} />
       </div>
       {versions.length > 0 && (
         <p className="small muted">
@@ -194,40 +196,6 @@ export function RetentionPage() {
         <ComparePanel segmentQuery={segmentQuery} defaultDay={sortedDays.find((d) => d > 0) ?? 1} synced={synced} />
       )}
     </>
-  );
-}
-
-/** Chọn mốc DN hiển thị: D0…D30 từng ngày, thêm D40/D45/D60. */
-function DayPicker({ value, max, onChange }: { value: number[]; max: number; onChange: (days: number[]) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-  const options = [...Array.from({ length: 31 }, (_, i) => i), ...EXTRA_DAYS].filter((n) => n <= max);
-  const toggle = (n: number) => onChange(value.includes(n) ? value.filter((x) => x !== n) : [...value, n]);
-  return (
-    <div className="day-picker" ref={ref}>
-      <button type="button" onClick={() => setOpen(!open)}>Cột: {value.map((n) => `D${n}`).join(' · ') || '—'} ▾</button>
-      {open && (
-        <div className="day-picker-pop">
-          <div className="day-picker-head">
-            <span className="small muted">Chọn ngày hiển thị</span>
-            <button type="button" className="link" onClick={() => onChange(DEFAULT_DAYS)}>Mặc định</button>
-          </div>
-          <div className="day-grid">
-            {options.map((n) => (
-              <button key={n} type="button" className={value.includes(n) ? 'chip active' : 'chip'} onClick={() => toggle(n)}>
-                D{n}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -336,8 +304,8 @@ function ComparePanel({ segmentQuery, defaultDay, synced }: {
 }
 
 /**
- * Doanh thu quảng cáo của từng ngày đến từ người dùng cài ngày nào (GA4). Ngày cài chiếm ≤ 1% tổng doanh thu của
- * khoảng đang xem được gộp vào cột "Trước đó".
+ * Doanh thu quảng cáo của từng ngày đến từ người dùng cài ngày nào (GA4). Ngày cài trong khoảng đang xem luôn có cột;
+ * ngày cài trước khoảng đó chiếm ≤ 1% tổng doanh thu được gộp vào cột "Trước đó".
  */
 function RevenueByInstallTable({ synced }: { synced?: string | null }) {
   const [range, setRange] = useState({ from: daysAgo(13), to: daysAgo(0) });
@@ -360,8 +328,9 @@ function RevenueByInstallTable({ synced }: { synced?: string | null }) {
     <>
       <h2>Doanh thu theo ngày cài</h2>
       <p className="small muted">
-        Doanh thu quảng cáo của mỗi ngày đến từ người dùng cài ngày nào (GA4, lệch nhẹ so với AdMob). Ngày cài chiếm ≤ 1%
-        doanh thu của khoảng đang xem được gộp vào cột "Trước". Hôm nay và hôm qua chưa đủ số.
+        Doanh thu quảng cáo của mỗi ngày đến từ người dùng cài ngày nào (GA4, lệch nhẹ so với AdMob). Mỗi ngày cài trong
+        khoảng đang xem có 1 cột; người cài trước khoảng đó gộp vào cột "Trước" (ngày nào chiếm trên 1% doanh thu thì vẫn
+        tách riêng). Hôm nay và hôm qua chưa đủ số.
       </p>
       <div className="filters">
         <DateRangePicker from={range.from} to={range.to} onChange={setRange} />

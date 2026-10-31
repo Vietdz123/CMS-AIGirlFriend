@@ -3,7 +3,9 @@ import { Role } from '@prisma/client';
 import { IsOptional, IsString } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
-import { allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, cohortRoasCampaigns, listCampaigns } from '../common/ad-campaigns';
+import {
+  allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, cohortRoasCampaigns, listCampaigns, parseRoasDays,
+} from '../common/ad-campaigns';
 import { isIsoDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
 import { GOOGLE_SOURCE, GoogleAdsSyncService } from './google-ads-sync.service';
@@ -103,8 +105,8 @@ export class GoogleAdsController {
   }
 
   /**
-   * ROAS D0/D1/D3/D7/D14/D30 theo ngày tương tác quảng cáo. Query: from, to, campaignIds, storeIds (phân tách bằng
-   * dấu phẩy). Người không phải admin chỉ tính trên chiến dịch ghép với app được gán.
+   * ROAS DN theo ngày tương tác quảng cáo. Query: from, to, campaignIds, storeIds, days (mốc N, ví dụ 0,2,11; mặc định
+   * 0,1,3,7,14,30) (phân tách bằng dấu phẩy). Người không phải admin chỉ tính trên chiến dịch ghép với app được gán.
    */
   @Get('roas-cohort')
   async roasCohort(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
@@ -119,6 +121,7 @@ export class GoogleAdsController {
       campaignIds: q.campaignIds?.split(',').filter(Boolean),
       storeIds: q.storeIds?.split(',').filter(Boolean),
       allowedAppIds: await this.access.allowedAppIds(user),
+      days: parseRoasDays(q.days),
     });
   }
 
@@ -133,6 +136,7 @@ export class GoogleAdsController {
       campaignIds: q.campaignIds?.split(',').filter(Boolean),
       storeIds: q.storeIds?.split(',').filter(Boolean),
       allowedAppIds: await this.access.allowedAppIds(user),
+      days: parseRoasDays(q.days),
     });
   }
 

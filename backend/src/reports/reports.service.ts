@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { addDays, toDbDate } from '../common/dates';
+import { packagesOf } from '../iap/iap.controller';
+import { IapService } from '../iap/iap.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ReportFilter {
@@ -10,6 +12,13 @@ export interface ReportFilter {
   accountIds?: string[];
   formats?: string[];
   countries?: string[];
+  /** Kênh tính chi phí: google, facebook; không truyền = mọi kênh. Doanh thu AdMob không bị lọc. */
+  spendSources?: string[];
+  /**
+   * VAT cộng thêm vào chi phí Google Ads (Cost trên Google Ads là giá chưa thuế), ví dụ 0.08 = 8%. 0 / không truyền =
+   * không tính thuế.
+   */
+  googleVat?: number;
 }
 
 export type Granularity = 'day' | 'week' | 'month';
@@ -32,8 +41,11 @@ interface SpendRow {
  * Chi phí quảng cáo (Facebook + Google Ads) kèm app được ghép: app gán tay trên chiến dịch, nếu không có
  * thì app AdMob có cùng package name. Chiến dịch không ghép được có appId NULL (chỉ hiện khi không lọc theo app).
  */
-const SPEND_SOURCE = Prisma.sql`(
-  SELECT s.date, s.country, s."spendMicros", s.installs,
+const spendSource = (f: ReportFilter) => Prisma.sql`(
+  SELECT s.date, s.country, s.source,
+    CASE WHEN s.source = 'google' THEN round(s."spendMicros" * ${1 + (f.googleVat ?? 0)}::float8)::bigint
+         ELSE s."spendMicros" END AS "spendMicros",
+    s.installs,
     COALESCE(c."appId", (SELECT MIN(a.id) FROM "App" a WHERE a."storeId" = c."storeId")) AS "appId"
   FROM "AdSpendStat" s
   JOIN (
@@ -56,7 +68,18 @@ const METRICS_SQL = Prisma.sql`
 
 @Injectable()
 export class ReportsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private iap: IapService,
+  ) {}
+
+  /** Doanh thu IAP theo ngày cho bộ lọc (package của app đang chọn; "chưa ghép app" không có IAP). */
+  private async iapDaily(f: ReportFilter) {
+    if (f.appIds?.length === 1 && f.appIds[0] === UNMATCHED) {
+      return new Map<string, { revenue: number; net: number; orders: number; refunds: number }>();
+    }
+    return this.iap.daily(f.from, f.to, await packagesOf(this.prisma, f.appIds?.filter((id) => id !== UNMATCHED) ?? null), f.countries);
+  }
 
   async summary(f: ReportFilter) {
     const days = diffDays(f.from, f.to) + 1;
@@ -67,7 +90,7 @@ export class ReportsService {
       // Xem mọi app: tách riêng phần chi phí chưa ghép app (đã nằm trong current.spend) để hiển thị.
       f.appIds === null
         ? this.prisma.$queryRaw<SpendRow[]>`
-            SELECT ${SPEND_SQL} FROM ${SPEND_SOURCE} WHERE ${this.spendWhere({ ...f, appIds: [UNMATCHED] })}`
+            SELECT ${SPEND_SQL} FROM ${spendSource(f)} WHERE ${this.spendWhere({ ...f, appIds: [UNMATCHED] })}`
         : Promise.resolve(null),
     ]);
     return {
@@ -87,12 +110,22 @@ export class ReportsService {
         GROUP BY 1`,
       this.prisma.$queryRaw<(SpendRow & { bucket: Date })[]>`
         SELECT date_trunc(${bucket}, date)::date AS bucket, ${SPEND_SQL}
-        FROM ${SPEND_SOURCE} WHERE ${this.spendWhere(f)}
+        FROM ${spendSource(f)} WHERE ${this.spendWhere(f)}
         GROUP BY 1`,
     ]);
     const key = (d: Date) => d.toISOString().slice(0, 10);
-    return mergeBy(rows, spendRows, (r) => key(r.bucket))
-      .map(([date, r, sp]) => ({ date, ...withSpend(metrics(r), sp) }))
+    // IAP theo ngày, gộp theo cùng mốc (tuần / tháng = ngày đầu mốc như date_trunc của Postgres).
+    const iapByBucket = new Map<string, { gross: number; net: number; orders: number }>();
+    for (const [date, v] of await this.iapDaily(f)) {
+      const b = bucketOf(date, granularity);
+      const cur = iapByBucket.get(b) ?? { gross: 0, net: 0, orders: 0 };
+      iapByBucket.set(b, { gross: cur.gross + v.revenue, net: cur.net + v.net, orders: cur.orders + v.orders - v.refunds });
+    }
+    const points = mergeBy(rows, spendRows, (r) => key(r.bucket)).map(([date, r, sp]) => [date, r, sp] as const);
+    const dates = new Set(points.map(([d]) => d));
+    const extra = [...iapByBucket.keys()].filter((d) => !dates.has(d)).map((d) => [d, undefined, undefined] as const);
+    return [...points, ...extra]
+      .map(([date, r, sp]) => ({ date, ...withSpend(metrics(r), sp, iapByBucket.get(date)) }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }
 
@@ -125,7 +158,7 @@ export class ReportsService {
     const spendColumn = Prisma.raw(dimension === 'app' ? `COALESCE("appId", '${UNMATCHED}')` : 'country');
     const spendRows = await this.prisma.$queryRaw<(SpendRow & { key: string })[]>`
       SELECT ${spendColumn} AS key, ${SPEND_SQL}
-      FROM ${SPEND_SOURCE} WHERE ${this.spendWhere(f)}
+      FROM ${spendSource(f)} WHERE ${this.spendWhere(f)}
       GROUP BY 1`;
     const merged = mergeBy(rows, spendRows, (r) => r.key);
     const labels = await this.labels(dimension, merged.map(([key]) => key));
@@ -160,11 +193,17 @@ export class ReportsService {
   }
 
   private async totals(f: ReportFilter) {
-    const [[row], [spend]] = await Promise.all([
+    const [[row], [spend], iap] = await Promise.all([
       this.prisma.$queryRaw<MetricRow[]>`SELECT ${METRICS_SQL} FROM "UnitStat" WHERE ${this.where(f)}`,
-      this.prisma.$queryRaw<SpendRow[]>`SELECT ${SPEND_SQL} FROM ${SPEND_SOURCE} WHERE ${this.spendWhere(f)}`,
+      this.prisma.$queryRaw<SpendRow[]>`SELECT ${SPEND_SQL} FROM ${spendSource(f)} WHERE ${this.spendWhere(f)}`,
+      this.iapDaily(f),
     ]);
-    return withSpend(metrics(row), spend);
+    const all = [...iap.values()];
+    return withSpend(metrics(row), spend, {
+      gross: all.reduce((s, v) => s + v.revenue, 0),
+      net: all.reduce((s, v) => s + v.net, 0),
+      orders: all.reduce((s, v) => s + v.orders - v.refunds, 0),
+    });
   }
 
   private where(f: ReportFilter): Prisma.Sql {
@@ -177,7 +216,7 @@ export class ReportsService {
   }
 
   /**
-   * Bộ lọc cho chi phí: không có chiều format/ad unit nên chỉ lọc theo ngày, app, quốc gia.
+   * Bộ lọc cho chi phí: không có chiều format/ad unit nên chỉ lọc theo ngày, app, quốc gia, kênh quảng cáo.
    * appIds có thể chứa UNMATCHED = chi phí của chiến dịch chưa ghép được app nào.
    */
   private spendWhere(f: ReportFilter): Prisma.Sql {
@@ -188,6 +227,7 @@ export class ReportsService {
       parts.push(Prisma.sql`(${Prisma.join(apps, ' OR ')})`);
     }
     if (f.countries?.length) parts.push(inList('country', f.countries));
+    if (f.spendSources?.length) parts.push(inList('source', f.spendSources));
     return Prisma.join(parts, ' AND ');
   }
 
@@ -244,17 +284,36 @@ function metrics(r: MetricRow | undefined) {
 
 const UNMATCHED = '__unmatched__';
 
-function withSpend(m: ReturnType<typeof metrics>, r: SpendRow | undefined) {
+/**
+ * Gắn chi phí và doanh thu IAP vào số liệu quảng cáo. earnings vẫn là doanh thu quảng cáo AdMob (phần publisher nhận);
+ * profit / ROAS tính trên tổng doanh thu = quảng cáo + IAP thực nhận ước tính (chưa thuế, đã trừ phí Google).
+ */
+function withSpend(m: ReturnType<typeof metrics>, r: SpendRow | undefined, iap = { gross: 0, net: 0, orders: 0 }) {
   const spend = Number(r?.spend_micros ?? 0) / 1e6;
   const installs = Number(r?.installs ?? 0);
+  const totalRevenue = m.earnings + iap.net;
   return {
     ...m,
+    iapRevenue: iap.gross,
+    iapNet: iap.net,
+    /** Số đơn IAP đã tính tiền, trừ đơn hoàn tiền. */
+    iapOrders: iap.orders,
+    totalRevenue,
     spend,
     installs,
-    profit: m.earnings - spend,
-    roas: spend ? m.earnings / spend : 0,
+    profit: totalRevenue - spend,
+    roas: spend ? totalRevenue / spend : 0,
     cpi: installs ? spend / installs : 0,
   };
+}
+
+/** Ngày đầu mốc chứa date, giống date_trunc của Postgres (tuần bắt đầu thứ Hai). */
+function bucketOf(date: string, granularity: Granularity): string {
+  if (granularity === 'day') return date;
+  if (granularity === 'month') return `${date.slice(0, 7)}-01`;
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
 }
 
 /** Ghép 2 danh sách theo khoá; khoá chỉ có ở 1 bên vẫn được giữ (bên kia undefined). */

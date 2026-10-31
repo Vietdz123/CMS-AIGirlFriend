@@ -267,3 +267,31 @@ td.neg { color: var(--danger); }
 .compare-summary p { margin: 0 0 6px; }
 .cell-new { background: #eef4ff; font-weight: 600; }
 label.inline { flex-direction: row; align-items: center; gap: 6px; }
+.fx-edit { padding: 12px 16px; margin-bottom: 16px; }
+.fx-edit .filters { margin: 8px 0 0; }
+/* Nút chọn 2–3 lựa chọn dính nhau (ví dụ USD | VND trên Monet & UA). */
+.seg { display: inline-flex; border: 1px solid #ccc; border-radius: 3px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: #fff; padding: 6px 12px; font-size: 12px; color: #444; }
+.seg button + button { border-left: 1px solid #ccc; }
+.seg button.active { background: var(--accent); color: #fff; }
+.iap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 16px; }
+/* Bảng "Gói IAP" trên Monet & UA: đầu bảng gồm tiêu đề + số tổng bên trái, bộ lọc bên phải; chỉ bảng cuộn ngang. */
+.iap-card { margin-top: 36px; border: 1px solid #e2e2e2; border-radius: 4px; background: #fff; }
+.iap-card-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px 24px;
+  padding: 12px 14px; border-bottom: 1px solid #ececec; }
+.iap-card-head h3 { margin: 0 0 6px; }
+.iap-chips { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: #555; }
+.iap-card-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.iap-scroll { overflow-x: auto; }
+.iap-scroll th { background: #fafafa; }
+.iap-scroll tbody tr:last-child td { border-bottom: 0; }
+/* Nút chọn nguồn ROAS (GA4 / Google Ads) nổi bật trên bảng ROAS theo ngày. */
+.roas-source { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 4px 0 14px; }
+.seg.seg-lg { border-radius: 8px; border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(37, 99, 235, 0.15); }
+.seg.seg-lg button { padding: 9px 18px; font-size: 14px; font-weight: 600; display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+.seg.seg-lg button + button { border-left: 2px solid var(--accent); }
+.seg.seg-lg button small { font-size: 11px; font-weight: 400; opacity: 0.75; }
+.seg.seg-lg button:not(.active):hover { background: var(--accent-soft); }
+.day-picker-foot { display: flex; justify-content: flex-end; gap: 8px; margin: 10px -10px -10px; padding: 10px; border-top: 1px solid #f0f0f0; }
+/* Ô chọn mốc nằm đầu hàng bộ lọc (bảng ROAS): popup mở sang phải để không tràn ra ngoài màn hình. */
+.day-picker.left .day-picker-pop { left: 0; right: auto; }

@@ -21,6 +21,14 @@ export interface Metrics {
 
 /** Chi phí Facebook Ads: có ở tổng quan, theo ngày, theo app và theo quốc gia. */
 export interface SpendMetrics {
+  /** Doanh thu mua trong app (Google Play): giá sau thuế (đã bỏ VAT/GST), đã trừ hoàn tiền, chưa trừ phí Google, USD. */
+  iapRevenue: number;
+  /** Ước tính thực nhận từ IAP: iapRevenue trừ phí Google (15%), USD. */
+  iapNet: number;
+  /** Số đơn IAP đã tính tiền, trừ đơn hoàn tiền. */
+  iapOrders: number;
+  /** earnings (quảng cáo) + iapNet; profit / ROAS tính trên số này. */
+  totalRevenue: number;
   spend: number;
   installs: number;
   profit: number;
@@ -166,10 +174,14 @@ export interface CohortRoasRow {
   spend: number;
   installs: number;
   convValue: number;
-  value: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number>;
-  roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
+  value: Record<string, number>;
+  roas: Record<string, number | null>;
   /** partial: số tích luỹ tới hiện tại, còn tăng; final: đã đủ ngày, đã chốt. */
-  status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
+  status: Record<string, 'partial' | 'final'>;
+  /** ROAS DN theo doanh thu GA4 của người dùng từ các chiến dịch (không giới hạn cửa sổ 7 ngày của Google Ads). */
+  gaRoas: Record<string, number | null>;
+  gaRevenue: number;
+  gaUsers: number;
 }
 
 /** Retention theo ngày cài (GA4): số người dùng mới và active[n] = số còn hoạt động ngày thứ n (chỉ các ngày đã đủ). */
@@ -232,8 +244,11 @@ export interface CohortRoasCampaign {
   installs: number;
   cpi: number | null;
   convValue: number;
-  roas: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', number | null>;
-  status: Record<'d0' | 'd1' | 'd3' | 'd7' | 'd14' | 'd30', 'partial' | 'final'>;
+  roas: Record<string, number | null>;
+  status: Record<string, 'partial' | 'final'>;
+  gaRoas: Record<string, number | null>;
+  gaRevenue: number;
+  gaUsers: number;
 }
 
 /** Doanh thu quảng cáo theo ngày phát sinh x ngày cài; columns gồm ngày cài, "earlier" (gộp ≤ 1%) và "unknown". */
@@ -284,4 +299,20 @@ export interface GadsBalancePoint {
   limit: number;
   served: number;
   adjustment: number;
+}
+
+/** 1 dòng bảng "Gói IAP": 1 ngày x nước mua x gói (USD, trừ priceLocal theo tiền người mua). */
+export interface IapDetailRow {
+  date: string;
+  country: string;
+  sku: string;
+  productType: string;
+  packageName: string;
+  currency: string;
+  priceLocal: number;
+  orders: number;
+  refunds: number;
+  tax: number;
+  gross: number;
+  net: number;
 }

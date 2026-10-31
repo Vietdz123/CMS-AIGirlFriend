@@ -20,6 +20,8 @@ const DOMINANT_SHARE = 0.9;
 export const MIXED_VERSION = 'mixed';
 /** Số ngày gần nhất lấy lại doanh thu theo ngày cài mỗi lần đồng bộ. */
 const REVENUE_DAYS = 14;
+/** ROAS theo GA4: lấy lại người cài chừng ấy ngày gần nhất (D30 cần 31 ngày + vài ngày GA4 còn điều chỉnh). */
+const CAMPAIGN_REVENUE_DAYS = 45;
 /** Cột ngày cài chiếm ≤ ngưỡng này trên tổng doanh thu của khoảng đang xem thì gộp vào cột "trước đó". */
 const MERGE_SHARE = 0.01;
 /** Mốc trả về cho bảng theo nước (Ranking Finance). */
@@ -128,6 +130,13 @@ export class RetentionService {
         this.prisma.revenueCohortStat.deleteMany({ where: { date: { gte: toDbDate(revFrom) } } }),
         ...batches(revenue).map((d) => this.prisma.revenueCohortStat.createMany({ data: d })),
       ]);
+      // Doanh thu GA4 theo chiến dịch Google Ads x ngày cài x số ngày sau cài (cột ROAS theo GA4 trên trang Google Ads).
+      const campFrom = addDays(todayIn(timeZone), -(CAMPAIGN_REVENUE_DAYS - 1));
+      const campaignRevenue = await this.fetchCampaignRevenue(campFrom, todayIn(timeZone));
+      await this.prisma.$transaction([
+        this.prisma.gaCampaignRevenue.deleteMany({ where: { installDate: { gte: toDbDate(campFrom) } } }),
+        ...batches(campaignRevenue).map((d) => this.prisma.gaCampaignRevenue.createMany({ data: d })),
+      ]);
       this.lastSyncedAt = new Date();
       this.lastError = null;
       this.logger.log(`GA4 retention ${from}..${to}: ${rowCount} rows`);
@@ -219,8 +228,8 @@ export class RetentionService {
   }
 
   /**
-   * Ma trận doanh thu theo ngày cài: mỗi dòng là 1 ngày phát sinh doanh thu, mỗi cột là 1 ngày cài. Ngày cài chiếm
-   * ≤ 1% tổng doanh thu của khoảng đang xem được gộp vào cột "trước đó" (mọi ngày cài cũ hơn cột nhỏ nhất còn giữ).
+   * Ma trận doanh thu theo ngày cài: mỗi dòng là 1 ngày phát sinh doanh thu, mỗi cột là 1 ngày cài. Ngày cài trong
+   * khoảng đang xem luôn có cột; ngày cài trước khoảng đó chiếm ≤ 1% tổng doanh thu được gộp vào cột "trước đó".
    */
   async revenueByInstallDate(q: { from: string; to: string }) {
     const rows = await this.prisma.revenueCohortStat.findMany({
@@ -232,10 +241,11 @@ export class RetentionService {
     const byInstall = new Map<string, number>();
     for (const r of rows) byInstall.set(key(r.installDate), (byInstall.get(key(r.installDate)) ?? 0) + Number(r.revenueMicros));
 
-    // Giữ cột từ ngày cài mới nhất trở về, dừng ở ngày đầu tiên chiếm ≤ 1%: ngày đó và mọi ngày cũ hơn gộp thành "trước đó".
+    // Ngày cài trong khoảng đang xem luôn có cột riêng (kể cả hôm nay mới có ít doanh thu). Ngày cài trước khoảng đó:
+    // giữ cột từ mới nhất trở về, dừng ở ngày đầu tiên chiếm ≤ 1%; ngày đó và mọi ngày cũ hơn gộp thành "trước đó".
     const dates = [...byInstall.keys()].filter((k) => k !== 'unknown').sort().reverse();
-    const kept: string[] = [];
-    for (const d of dates) {
+    const kept: string[] = dates.filter((d) => d >= q.from);
+    for (const d of dates.filter((d) => d < q.from)) {
       if (total && byInstall.get(d)! / total <= MERGE_SHARE) break;
       kept.push(d);
     }
@@ -279,6 +289,51 @@ export class RetentionService {
       spend,
       rows: [...days.values()].sort((a, b) => b.date.localeCompare(a.date)),
     };
+  }
+
+  /**
+   * Doanh thu quảng cáo (totalAdRevenue) của người dùng nguồn google cài trong [from, to], theo chiến dịch đầu tiên
+   * (firstUserCampaignId) x ngày cài x ngày phát sinh, kèm số người mới của chiến dịch trong ngày cài.
+   */
+  private async fetchCampaignRevenue(from: string, to: string): Promise<Prisma.GaCampaignRevenueCreateManyInput[]> {
+    const ymd = (v: string) => `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+    const installs: string[] = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) installs.push(d.replace(/-/g, ''));
+    const google = { filter: { fieldName: 'firstUserSource', stringFilter: { value: 'google' } } };
+    const [revenue, users] = await Promise.all([
+      this.runReport({
+        dateRanges: [{ startDate: from, endDate: to }],
+        dimensions: [{ name: 'firstSessionDate' }, { name: 'date' }, { name: 'firstUserCampaignId' }, { name: 'firstUserCampaignName' }],
+        metrics: [{ name: 'totalAdRevenue' }],
+        dimensionFilter: { andGroup: { expressions: [google, { filter: { fieldName: 'firstSessionDate', inListFilter: { values: installs } } }] } },
+      }),
+      this.runReport({
+        dateRanges: [{ startDate: from, endDate: to }],
+        dimensions: [{ name: 'date' }, { name: 'firstUserCampaignId' }, { name: 'firstUserCampaignName' }],
+        metrics: [{ name: 'newUsers' }],
+        dimensionFilter: google,
+      }),
+    ]);
+    const out = new Map<string, Prisma.GaCampaignRevenueCreateManyInput>();
+    const row = (install: string, id: string, name: string, dayN: number) => {
+      const k = `${install}|${id}|${dayN}`;
+      const r = out.get(k) ?? { installDate: toDbDate(install), campaignId: id, campaignName: name, dayN, revenueMicros: 0n, users: 0 };
+      out.set(k, r);
+      return r;
+    };
+    for (const r of revenue) {
+      const [first, date, id, name] = r.dimensionValues.map((v) => v.value);
+      if (!/^\d{8}$/.test(first)) continue;
+      const dayN = daysBetween(ymd(first), ymd(date));
+      if (dayN < 0) continue;
+      const x = row(ymd(first), id, name, dayN);
+      x.revenueMicros = BigInt(x.revenueMicros as bigint) + BigInt(Math.round(Number(r.metricValues[0].value) * 1e6));
+    }
+    for (const r of users) {
+      const [date, id, name] = r.dimensionValues.map((v) => v.value);
+      row(ymd(date), id, name, 0).users = Number(r.metricValues[0].value);
+    }
+    return [...out.values()].filter((r) => (r.revenueMicros as bigint) > 0n || (r.users ?? 0) > 0);
   }
 
   private async runReport(body: Record<string, unknown>): Promise<Ga4Row[]> {

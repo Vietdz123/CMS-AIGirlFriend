@@ -8,7 +8,10 @@ import { Dimension, Granularity, ReportFilter, ReportsService } from './reports.
 const DIMENSIONS: Dimension[] = ['app', 'adUnit', 'format', 'country', 'adSource', 'account'];
 const GRANULARITIES: Granularity[] = ['day', 'week', 'month'];
 
-/** Query: from, to (YYYY-MM-DD), appIds, accountIds, formats, countries (phân tách bằng dấu phẩy). */
+/**
+ * Query: from, to (YYYY-MM-DD), appIds, accountIds, formats, countries, spendSources (google, facebook) (phân tách bằng
+ * dấu phẩy), googleVat (VAT cộng vào chi phí Google Ads, ví dụ 0.08).
+ */
 type FilterQuery = Record<string, string | undefined>;
 
 @Controller('reports')
@@ -89,9 +92,20 @@ export class ReportsController {
       accountIds: list(q.accountIds),
       formats: list(q.formats),
       countries: list(q.countries),
+      spendSources: list(q.spendSources)?.filter((v) => SPEND_SOURCES.includes(v)),
+      googleVat: vat(q.googleVat),
     };
   }
 }
+
+/** VAT Google Ads dạng tỷ lệ (0.08 = 8%); ngoài 0..0.5 coi như không tính. */
+function vat(v?: string): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 && n <= 0.5 ? n : undefined;
+}
+
+/** Kênh quảng cáo lọc được cho chi phí. */
+const SPEND_SOURCES = ['google', 'facebook'];
 
 function list(v?: string): string[] | undefined {
   const items = v?.split(',').map((s) => s.trim()).filter(Boolean);
