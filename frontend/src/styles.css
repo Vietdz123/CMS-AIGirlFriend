@@ -126,6 +126,8 @@ tr.clickable:hover td { background: #f9fafb; }
 .badge.success { background: #dcfce7; color: var(--up); }
 .badge.error { background: #fee2e2; color: var(--danger); }
 .badge.info { background: var(--accent-soft); color: var(--accent); }
+.badge.warn { background: #fef3c7; color: #92400e; }
+td .badge + .badge { margin-left: 4px; }
 .notice { padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
 .notice.success { background: #dcfce7; color: var(--up); }
 .notice.error { background: #fee2e2; color: var(--danger); }
@@ -295,3 +297,12 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; }
 .day-picker-foot { display: flex; justify-content: flex-end; gap: 8px; margin: 10px -10px -10px; padding: 10px; border-top: 1px solid #f0f0f0; }
 /* Ô chọn mốc nằm đầu hàng bộ lọc (bảng ROAS): popup mở sang phải để không tràn ra ngoài màn hình. */
 .day-picker.left .day-picker-pop { left: 0; right: auto; }
+/* Link mời nối Google Ads */
+.invite-box { display: flex; flex-direction: column; gap: 8px; margin: 0 0 16px; }
+.invite-row { display: flex; gap: 8px; align-items: center; }
+.invite-row input { flex: 1; min-width: 0; font-size: 12px; }
+/* Trang công khai /connect/google-ads */
+.connect-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: #f5f6f8; }
+.connect-card { max-width: 520px; width: 100%; padding: 28px; }
+.connect-card h1 { margin-top: 0; font-size: 22px; }
+.connect-card ul { padding-left: 18px; }

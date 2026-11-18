@@ -35,14 +35,21 @@ export class AdmobController {
     @Query('error') error: string | undefined,
     @Res() res: Response,
   ) {
-    if (error) return res.redirect(this.admob.frontendUrl(`/accounts?error=${encodeURIComponent(error)}`));
+    if (error) {
+      // Người nhận link mời bấm huỷ ở màn đồng ý của Google: về trang công khai, không về trang cần đăng nhập CMS.
+      const fromInvite = await this.admob.verifyState(state).then((s) => s.invite, () => false);
+      const back = fromInvite ? '/connect/google-ads' : '/accounts';
+      return res.redirect(this.admob.frontendUrl(`${back}?error=${encodeURIComponent(error)}`));
+    }
     let page = '/accounts';
     try {
-      const purpose = await this.admob.verifyState(state);
+      const { purpose, invite } = await this.admob.verifyState(state);
       if (purpose === GADS_OAUTH_PURPOSE) {
-        page = '/google-ads';
+        // Người nhận link mời không đăng nhập CMS: đưa về trang công khai thay vì trang Google Ads.
+        page = invite ? '/connect/google-ads' : '/google-ads';
         const ids = await this.gads.handleCallback(code);
         ids.forEach((id) => this.gadsSync.startInitial(id));
+        if (invite) return res.redirect(this.admob.frontendUrl(`${page}?connected=${ids.length}`));
       } else {
         const ids = await this.admob.handleCallback(code);
         // Lần đầu kết nối: backfill dữ liệu lịch sử ở background.

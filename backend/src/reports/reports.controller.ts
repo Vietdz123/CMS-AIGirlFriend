@@ -10,7 +10,8 @@ const GRANULARITIES: Granularity[] = ['day', 'week', 'month'];
 
 /**
  * Query: from, to (YYYY-MM-DD), appIds, accountIds, formats, countries, spendSources (google, facebook) (phân tách bằng
- * dấu phẩy), googleVat (VAT cộng vào chi phí Google Ads, ví dụ 0.08).
+ * dấu phẩy), googleVat (VAT cộng vào chi phí Google Ads, ví dụ 0.08), googleVatHk (thuế cho chiến dịch tên kết thúc "HK",
+ * ví dụ 0.03), spendOwner (hk = chiến dịch tên kết thúc "HK", own = phần còn lại).
  */
 type FilterQuery = Record<string, string | undefined>;
 
@@ -94,6 +95,8 @@ export class ReportsController {
       countries: list(q.countries),
       spendSources: list(q.spendSources)?.filter((v) => SPEND_SOURCES.includes(v)),
       googleVat: vat(q.googleVat),
+      googleVatHk: vat(q.googleVatHk),
+      spendOwner: q.spendOwner === 'hk' || q.spendOwner === 'own' ? q.spendOwner : undefined,
     };
   }
 }

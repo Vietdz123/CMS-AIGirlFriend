@@ -19,6 +19,16 @@ export interface ReportFilter {
    * không tính thuế.
    */
   googleVat?: number;
+  /**
+   * Thuế riêng cho chiến dịch Hồng Kông (tên kết thúc bằng "HK", tài khoản đi thuê), ví dụ 0.03 = 3%. Chỉ áp dụng khi
+   * có googleVat; không truyền = dùng googleVat cho mọi chiến dịch.
+   */
+  googleVatHk?: number;
+  /**
+   * Lọc chi phí theo nhóm tài khoản: 'hk' = chiến dịch Google Ads tên kết thúc "HK" (đi thuê), 'own' = mọi chi phí còn
+   * lại (Google Ads khác + Facebook); không truyền = cả hai.
+   */
+  spendOwner?: 'hk' | 'own';
 }
 
 export type Granularity = 'day' | 'week' | 'month';
@@ -42,16 +52,18 @@ interface SpendRow {
  * thì app AdMob có cùng package name. Chiến dịch không ghép được có appId NULL (chỉ hiện khi không lọc theo app).
  */
 const spendSource = (f: ReportFilter) => Prisma.sql`(
-  SELECT s.date, s.country, s.source,
-    CASE WHEN s.source = 'google' THEN round(s."spendMicros" * ${1 + (f.googleVat ?? 0)}::float8)::bigint
-         ELSE s."spendMicros" END AS "spendMicros",
+  SELECT s.date, s.country, s.source, c."isHk",
+    CASE WHEN s.source <> 'google' THEN s."spendMicros"
+         WHEN c."isHk" THEN round(s."spendMicros" * ${1 + (f.googleVat ? f.googleVatHk ?? f.googleVat : 0)}::float8)::bigint
+         ELSE round(s."spendMicros" * ${1 + (f.googleVat ?? 0)}::float8)::bigint END AS "spendMicros",
     s.installs,
     COALESCE(c."appId", (SELECT MIN(a.id) FROM "App" a WHERE a."storeId" = c."storeId")) AS "appId"
   FROM "AdSpendStat" s
   JOIN (
-    SELECT 'facebook' AS source, id, "appId", "storeId" FROM "FbCampaign"
+    SELECT 'facebook' AS source, id, "appId", "storeId", false AS "isHk" FROM "FbCampaign"
     UNION ALL
-    SELECT 'google' AS source, id, "appId", "storeId" FROM "GadsCampaign"
+    -- Chiến dịch Hồng Kông: tên kết thúc bằng "HK" (vd Muchie_T1_ROAS.83_HK).
+    SELECT 'google' AS source, id, "appId", "storeId", upper(right(trim(name), 2)) = 'HK' AS "isHk" FROM "GadsCampaign"
   ) c ON c.source = s.source AND c.id = s."campaignId"
 ) sp`;
 
@@ -228,6 +240,8 @@ export class ReportsService {
     }
     if (f.countries?.length) parts.push(inList('country', f.countries));
     if (f.spendSources?.length) parts.push(inList('source', f.spendSources));
+    if (f.spendOwner === 'hk') parts.push(Prisma.sql`"isHk"`);
+    if (f.spendOwner === 'own') parts.push(Prisma.sql`NOT "isHk"`);
     return Prisma.join(parts, ' AND ');
   }
 

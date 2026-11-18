@@ -26,11 +26,23 @@ const MONEY_FIELDS = ['earnings', 'iapRevenue', 'iapNet', 'totalRevenue', 'spend
 const vnd = (v: number) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(v);
 const vndShort = (v: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(v);
 
+/** Khoảng ngày mặc định của trang (14 ngày gần nhất, tính cả hôm nay). */
+const DEFAULT_DAYS = 14;
+
 /** VAT Google Ads tại Việt Nam: Google thu thêm 8% trên Cost (= 7,407% số tiền nạp). */
 const GOOGLE_VAT = 0.08;
+/** Chiến dịch Hồng Kông (tên kết thúc "HK", tài khoản đi thuê) chỉ chịu 3%. */
+const GOOGLE_VAT_HK = 0.03;
 
 const IAP_GROSS_TITLE = 'Mua trong app (Google Play): giá người mua trả đã bỏ thuế VAT/GST, đã trừ hoàn tiền, chưa trừ phí Google';
 const IAP_NET_TITLE = 'Ước tính thực nhận: IAP sau thuế trừ phí Google Play 15%. Số chính xác có trong báo cáo thu nhập hằng tháng của Google';
+
+/** Nhóm tài khoản chi phí: HK = chiến dịch Google Ads tên kết thúc "HK" (tài khoản đi thuê), Cá nhân = phần còn lại. */
+const OWNERS = [
+  { value: '', label: 'Tất cả tài khoản' },
+  { value: 'own', label: 'Cá nhân' },
+  { value: 'hk', label: 'HK' },
+] as const;
 
 const usd = (v: number) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const cents = (v: number) => v.toFixed(2);
@@ -38,15 +50,18 @@ const cents = (v: number) => v.toFixed(2);
 /** Doanh thu quảng cáo vs chi phí UA theo ngày, cho 1 app hoặc tất cả. */
 export function MonetPage() {
   const { can } = useAuth();
-  const [filters, setFilters] = useFilters();
-  // Thuế Google Ads: Cost trên Google Ads chưa gồm VAT 8%; bật thì chi phí Google x 1.08. Mặc định tắt.
+  const [filters, setFilters] = useFilters(DEFAULT_DAYS);
+  // Thuế Google Ads: Cost trên Google Ads chưa gồm thuế; bật thì chi phí Google x 1.08, riêng chiến dịch HK x 1.03.
+  // Mặc định tắt.
   const [withVat, setWithVat] = useState(() => localStorage.getItem('monet-gads-vat') === 'on');
   useEffect(() => localStorage.setItem('monet-gads-vat', withVat ? 'on' : 'off'), [withVat]);
   // Chỉ trang này có ô chọn kênh / thuế nên chỉ trang này gửi spendSources, googleVat.
   const q = qs({
     ...filterQuery(filters),
     spendSources: filters.spendSources,
+    spendOwner: filters.spendOwner || undefined,
     googleVat: withVat ? String(GOOGLE_VAT) : undefined,
+    googleVatHk: withVat ? String(GOOGLE_VAT_HK) : undefined,
   });
   const apps = useQuery({ queryKey: ['apps'], queryFn: () => api<AppInfo[]>('/admob/apps') });
   const options = useQuery({
@@ -100,7 +115,10 @@ export function MonetPage() {
       `/iap/report?${qs({ from: filters.from, to: filters.to, appIds: filters.appIds, countries: filters.countries })}`,
     ),
   });
-  const channelLabel = CHANNELS.find((c) => c.value && c.value === filters.spendSources[0])?.label;
+  const channelLabel = [
+    CHANNELS.find((c) => c.value && c.value === filters.spendSources[0])?.label,
+    OWNERS.find((o) => o.value && o.value === filters.spendOwner)?.label,
+  ].filter(Boolean).join(', ');
   const selected = filters.appIds[0];
   // Chỉ admin xem được nhóm chưa ghép app (server chặn với Viewer/Manager); hiện tab khi có số hoặc đang chọn.
   const [unmatchedSeen, setUnmatchedSeen] = useState(false);
@@ -142,12 +160,20 @@ export function MonetPage() {
           onChange={(e) => setFilters({ spendSources: e.target.value ? [e.target.value] : [] })}>
           {CHANNELS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
+        <div className="seg" title="Tài khoản tính chi phí: HK = chiến dịch Google Ads tên kết thúc bằng HK (đi thuê), Cá nhân = các chiến dịch còn lại (kể cả Facebook)">
+          {OWNERS.map((o) => (
+            <button key={o.value} className={filters.spendOwner === o.value ? 'active' : ''}
+              onClick={() => setFilters({ spendOwner: o.value })}>
+              {o.value ? o.label : 'Tất cả'}
+            </button>
+          ))}
+        </div>
         <DateRangePicker from={filters.from} to={filters.to} onChange={setFilters} />
-        <button className="clear" onClick={() => setFilters({ countries: [], spendSources: [], from: daysAgo(6), to: daysAgo(0) })}>Clear</button>
+        <button className="clear" onClick={() => setFilters({ countries: [], spendSources: [], spendOwner: '', from: daysAgo(DEFAULT_DAYS - 1), to: daysAgo(0) })}>Clear</button>
         <div className="spacer" />
         <label className="inline small"
-          title="Cost trên Google Ads chưa gồm VAT 8%. Bật: chi phí Google Ads x 1,08 (8% thuế = 7,407% số tiền nạp) trong Spend, Profit, ROAS, CPI">
-          <input type="checkbox" checked={withVat} onChange={(e) => setWithVat(e.target.checked)} /> Tính thuế Google Ads (8%)
+          title="Cost trên Google Ads chưa gồm thuế. Bật: chi phí Google Ads x 1,08 (VAT 8% = 7,407% số tiền nạp), riêng chiến dịch tên kết thúc bằng HK (Hồng Kông, đi thuê) x 1,03, trong Spend, Profit, ROAS, CPI">
+          <input type="checkbox" checked={withVat} onChange={(e) => setWithVat(e.target.checked)} /> Tính thuế Google Ads (8% và 3% HK)
         </label>
         <label className="inline small" title="Bật: Profit, ROAS, Total Revenue cộng IAP thực nhận ước tính. Tắt: chỉ doanh thu quảng cáo">
           <input type="checkbox" checked={withIap} onChange={(e) => setWithIap(e.target.checked)} /> Tính IAP vào Profit
@@ -176,7 +202,7 @@ export function MonetPage() {
               </span>
               <span>
                 Spend{channelLabel && <span className="muted"> ({channelLabel})</span>}
-                {withVat && <span className="muted"> (gồm VAT Google 8%)</span>} <b>{m(cur.spend)}</b>
+                {withVat && <span className="muted"> (gồm thuế Google 8%, HK 3%)</span>} <b>{m(cur.spend)}</b>
               </span>
               <span>Profit <b className={cur.profit < 0 ? 'neg' : 'pos'}>{m(cur.profit)}</b></span>
               <span>ROAS <b>{cur.spend ? ratio(cur.roas) : '—'}</b></span>

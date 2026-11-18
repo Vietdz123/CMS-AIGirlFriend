@@ -14,6 +14,8 @@ export interface FilterValues {
   countries: string[];
   /** Kênh tính chi phí (google, facebook); rỗng = mọi kênh. Chỉ trang Monet & UA dùng. */
   spendSources: string[];
+  /** Nhóm tài khoản chi phí: '' = tất cả, 'own' = cá nhân, 'hk' = chiến dịch HK (đi thuê). Chỉ Monet & UA dùng. */
+  spendOwner: '' | 'own' | 'hk';
 }
 
 const PRESETS = [
@@ -25,16 +27,20 @@ const PRESETS = [
 
 const split = (v: string | null) => (v ? v.split(',').filter(Boolean) : []);
 
-/** Bộ lọc lưu trên URL để share link / reload không mất trạng thái. */
-export function useFilters(): [FilterValues, (patch: Partial<FilterValues>) => void] {
+/**
+ * Bộ lọc lưu trên URL để share link / reload không mất trạng thái. defaultDays = số ngày gần nhất khi link chưa có
+ * from (mặc định 7 ngày).
+ */
+export function useFilters(defaultDays = 7): [FilterValues, (patch: Partial<FilterValues>) => void] {
   const [params, setParams] = useSearchParams();
   const values: FilterValues = {
-    from: params.get('from') ?? daysAgo(6),
+    from: params.get('from') ?? daysAgo(defaultDays - 1),
     to: params.get('to') ?? daysAgo(0),
     appIds: split(params.get('apps')),
     formats: split(params.get('formats')),
     countries: split(params.get('countries')),
     spendSources: split(params.get('channels')),
+    spendOwner: (['own', 'hk'] as const).find((v) => v === params.get('owner')) ?? '',
   };
   const update = (patch: Partial<FilterValues>) => {
     const next = { ...values, ...patch };
@@ -47,6 +53,8 @@ export function useFilters(): [FilterValues, (patch: Partial<FilterValues>) => v
       if (list.length) p.set(key, list.join(','));
       else p.delete(key);
     }
+    if (next.spendOwner) p.set('owner', next.spendOwner);
+    else p.delete('owner');
     setParams(p, { replace: true });
   };
   return [values, update];

@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import { AccountsPage } from './pages/AccountsPage';
 import { AppsPage } from './pages/AppsPage';
 import { BreakdownPage } from './pages/BreakdownPage';
+import { ConnectGoogleAdsPage } from './pages/ConnectGoogleAdsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { FacebookPage } from './pages/FacebookPage';
 import { FxPage } from './pages/FxPage';
@@ -14,6 +15,7 @@ import { MonetPage } from './pages/MonetPage';
 import { RankingFinancePage } from './pages/RankingFinancePage';
 import { RetentionPage } from './pages/RetentionPage';
 import { SpendHistoryPage } from './pages/SpendHistoryPage';
+import { TrafficQualityPage } from './pages/TrafficQualityPage';
 import { SyncHistoryPage } from './pages/SyncHistoryPage';
 import { UsersPage } from './pages/UsersPage';
 
@@ -24,11 +26,14 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+      {/* Link mời nối Google Ads: công khai, người nhận không có tài khoản CMS. */}
+      <Route path="/connect/google-ads" element={<ConnectGoogleAdsPage />} />
       <Route element={user ? <Layout /> : <Navigate to="/login" replace />}>
         <Route index element={<DashboardPage />} />
         <Route path="monet" element={<MonetPage />} />
         <Route path="iap" element={<IapPage />} />
         <Route path="ranking-finance" element={<RankingFinancePage />} />
+        <Route path="traffic-quality" element={<TrafficQualityPage />} />
         <Route path="retention" element={<RetentionPage />} />
         <Route path="breakdown" element={<BreakdownPage />} />
         <Route path="apps" element={<AppsPage />} />
@@ -61,6 +66,7 @@ function Layout() {
           <NavLink to="/monet">Monet & UA</NavLink>
           <NavLink to="/iap">IAP</NavLink>
           <NavLink to="/ranking-finance">Ranking Finance</NavLink>
+          <NavLink to="/traffic-quality">Chất lượng traffic</NavLink>
           <NavLink to="/retention">Retention</NavLink>
           <NavLink to="/breakdown">Phân tích chi tiết</NavLink>
           <NavLink to="/apps">Ứng dụng</NavLink>

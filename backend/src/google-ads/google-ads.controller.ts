@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get,
 import { Role } from '@prisma/client';
 import { IsOptional, IsString } from 'class-validator';
 import { AppAccessService } from '../auth/app-access.service';
-import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
+import { AuthUser, CurrentUser, Public, Roles } from '../auth/decorators';
 import {
   allowedAdAccountIds, campaignDaily, campaignPackages, cohortRoas, cohortRoasCampaigns, listCampaigns, parseRoasDays,
 } from '../common/ad-campaigns';
@@ -31,6 +31,21 @@ export class GoogleAdsController {
   @Get('oauth/url')
   async oauthUrl(@CurrentUser() user: AuthUser) {
     return { url: await this.ads.authUrl(user.id) };
+  }
+
+  /** Tạo link mời để người khác (không có tài khoản CMS) tự nối tài khoản Google Ads của họ. */
+  @Roles(Role.ADMIN)
+  @Post('invite')
+  invite(@CurrentUser() user: AuthUser) {
+    return this.ads.inviteLink(user.id);
+  }
+
+  /** Trang công khai của link mời gọi để lấy link đăng nhập Google. Query: token. */
+  @Public()
+  @Get('invite/oauth-url')
+  async inviteOauthUrl(@Query('token') token?: string) {
+    if (!token) throw new BadRequestException('Thiếu token');
+    return { url: await this.ads.inviteAuthUrl(token) };
   }
 
   @Get('accounts')

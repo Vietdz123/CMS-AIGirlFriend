@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, del, post } from '../api';
 import { useAuth } from '../auth';
@@ -33,6 +34,16 @@ export function GoogleAdsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gads-accounts'] }),
   });
   const running = accounts.data?.some((a) => a.running) ?? false;
+  // Link mời người khác tự nối tài khoản Google Ads của họ (vd email ở HK không thể đăng nhập ở đây).
+  const [invite, setInvite] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const createInvite = useMutation({
+    mutationFn: () => post<{ url: string; expiresAt: string }>('/google-ads/invite'),
+    onSuccess: (v) => {
+      setInvite(v);
+      setCopied(false);
+    },
+  });
 
   return (
     <>
@@ -51,12 +62,34 @@ export function GoogleAdsPage() {
             </button>
           )}
           {can('ADMIN') && (
+            <button onClick={() => createInvite.mutate()} disabled={createInvite.isPending}
+              title="Tạo link gửi cho người khác tự đăng nhập email Google của họ và nối tài khoản Google Ads">
+              Tạo link mời
+            </button>
+          )}
+          {can('ADMIN') && (
             <button className="primary" onClick={() => connect.mutate()} disabled={connect.isPending}>
               + Kết nối Google Ads
             </button>
           )}
         </div>
       </header>
+      {invite && (
+        <div className="notice info invite-box">
+          <div>
+            Gửi link này cho chủ email Google Ads. Họ mở link, đăng nhập Google và đồng ý là tài khoản quảng cáo của họ tự
+            hiện ở bảng dưới (không cần tài khoản CMS). Hết hạn {dateTime(invite.expiresAt)}.
+          </div>
+          <div className="invite-row">
+            <input readOnly value={invite.url} onFocus={(e) => e.target.select()} />
+            <button onClick={() => navigator.clipboard.writeText(invite.url).then(() => setCopied(true))}>
+              {copied ? 'Đã copy' : 'Copy'}
+            </button>
+            <button className="link" onClick={() => setInvite(null)}>Đóng</button>
+          </div>
+        </div>
+      )}
+      {createInvite.error && <div className="notice error">{createInvite.error.message}</div>}
       {params.get('connected') && (
         <div className="notice success">
           Kết nối thành công. Đang tải chi phí lịch sử ở nền, quá trình này có thể mất vài phút.
