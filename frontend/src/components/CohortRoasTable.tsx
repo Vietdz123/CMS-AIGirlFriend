@@ -13,6 +13,10 @@ const EXTRA_DAYS = [35, 40, 44];
 const MAX_DAY = 44;
 
 type Status = 'partial' | 'final';
+/** Chiến dịch tiêu từ tỷ lệ này budget/ngày trở lên thì tô xanh (đã gần hết ngân sách). */
+const FULL_SPEND = 0.8;
+/** Chiến dịch Hồng Kông: tên kết thúc bằng "HK" (cùng quy tắc với thuế 3% trên Monet & UA). */
+const isHk = (name: string) => name.trim().toUpperCase().endsWith('HK');
 /** Nguồn doanh thu cho cột ROAS: Google Ads (conversion value, cửa sổ 7 ngày) hoặc GA4 (doanh thu thật, không giới hạn). */
 type Source = 'gads' | 'ga4';
 
@@ -209,6 +213,20 @@ function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
   if (data.error) return <div className="error-text small">{data.error.message}</div>;
   if (!data.data?.length) return <div className="muted small">Không có chiến dịch nào chạy trong ngày {date}.</div>;
 
+  const rows = data.data;
+  const sum = (f: (c: CohortRoasCampaign) => number) => rows.reduce((s, c) => s + f(c), 0);
+  const totalBudget = sum((c) => c.budget ?? 0);
+  const totalSpend = sum((c) => c.spend);
+  const totalInstalls = sum((c) => c.installs);
+  // ROAS tổng = tổng doanh thu DN (ROAS x chi phí từng chiến dịch) / tổng chi phí.
+  const totalRoas = (d: string) => {
+    const v = sum((c) => ((source === 'ga4' ? c.gaRoas[d] : c.roas[d]) ?? 0) * c.spend);
+    return totalSpend ? v / totalSpend : null;
+  };
+  const totalStatus = (d: string): Status => (source === 'ga4'
+    ? gaStatus(date, Number(d.slice(1)))
+    : rows.every((c) => c.status[d] === 'final') ? 'final' : 'partial');
+
   return (
     <table className="daily-table">
       <thead>
@@ -225,13 +243,34 @@ function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
         </tr>
       </thead>
       <tbody>
-        {data.data.map((c) => (
+        <tr className="total-row">
+          <td><b>Tổng ({rows.length} chiến dịch)</b></td>
+          <td className="num" title="Tổng budget/ngày của các chiến dịch"><b>{money(totalBudget)}</b></td>
+          <td className={`num ${totalBudget && totalSpend >= totalBudget * FULL_SPEND ? 'pos' : ''}`}
+            title={totalBudget ? `Tiêu ${Math.round((100 * totalSpend) / totalBudget)}% tổng budget` : undefined}>
+            <b>{money(totalSpend)}</b>
+          </td>
+          <td className="num"><b>{num(totalInstalls)}</b></td>
+          <td className="num"><b>{totalInstalls ? money(totalSpend / totalInstalls) : '—'}</b></td>
+          {DAYS.map((d) => <RoasCell key={d} v={totalRoas(d)} status={totalStatus(d)} />)}
+          <td className="num"><b>{money(sum((c) => (source === 'ga4' ? c.gaRevenue : c.convValue)))}</b></td>
+        </tr>
+        {rows.map((c) => {
+          const usage = c.budget ? c.spend / c.budget : null;
+          const full = usage !== null && usage >= FULL_SPEND;
+          return (
           <tr key={c.id}>
-            <td className="label-cell" title={`${c.name}\n${c.id}${c.storeId ? `\n${c.storeId}` : ''}`}>{c.name}</td>
-            <td className="num" title={c.budget === null ? 'Chưa ghi nhận được budget của ngày này' : undefined}>
+            <td className={`label-cell ${isHk(c.name) ? 'pos' : ''}`}
+              title={`${c.name}\n${c.id}${c.storeId ? `\n${c.storeId}` : ''}${isHk(c.name) ? '\nChiến dịch Hồng Kông' : ''}`}>
+              {c.name}
+            </td>
+            <td className={`num ${full ? 'pos' : ''}`} title={c.budget === null ? 'Chưa ghi nhận được budget của ngày này' : undefined}>
               {c.budget === null ? '—' : money(c.budget)}
             </td>
-            <td className="num">{money(c.spend)}</td>
+            <td className={`num ${full ? 'pos' : ''}`}
+              title={usage === null ? undefined : `Tiêu ${Math.round(usage * 100)}% budget${full ? ` (≥ ${FULL_SPEND * 100}%)` : ''}`}>
+              {money(c.spend)}
+            </td>
             <td className="num">{num(c.installs)}</td>
             <td className="num">{c.cpi === null ? '—' : money(c.cpi)}</td>
             {DAYS.map((d) => (source === 'ga4'
@@ -241,7 +280,8 @@ function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
               {money(source === 'ga4' ? c.gaRevenue : c.convValue)}
             </td>
           </tr>
-        ))}
+          );
+        })}
       </tbody>
     </table>
   );
