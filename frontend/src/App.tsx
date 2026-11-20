@@ -12,6 +12,7 @@ import { GoogleAdsPage } from './pages/GoogleAdsPage';
 import { IapPage } from './pages/IapPage';
 import { LoginPage } from './pages/LoginPage';
 import { MonetPage } from './pages/MonetPage';
+import { PaymentsPage } from './pages/PaymentsPage';
 import { RankingFinancePage } from './pages/RankingFinancePage';
 import { RetentionPage } from './pages/RetentionPage';
 import { SpendHistoryPage } from './pages/SpendHistoryPage';
@@ -42,12 +43,18 @@ export function App() {
         <Route path="google-ads" element={<GoogleAdsPage />} />
         <Route path="spend-history" element={<SpendHistoryPage />} />
         <Route path="fx" element={<FxPage />} />
+        <Route path="payments" element={<RequireRole roles={['ADMIN', 'MANAGER']}><PaymentsPage /></RequireRole>} />
         <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
         <Route path="sync-history" element={<AdminOnly><SyncHistoryPage /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   );
+}
+
+function RequireRole({ roles, children }: { roles: ('ADMIN' | 'MANAGER' | 'VIEWER')[]; children: ReactElement }) {
+  const { can } = useAuth();
+  return can(...roles) ? children : <Navigate to="/" replace />;
 }
 
 function AdminOnly({ children }: { children: ReactElement }) {
@@ -75,6 +82,7 @@ function Layout() {
           <NavLink to="/google-ads">Google Ads</NavLink>
           <NavLink to="/spend-history">Biến động chi phí</NavLink>
           <NavLink to="/fx">Tỷ giá</NavLink>
+          {can('ADMIN', 'MANAGER') && <NavLink to="/payments">Payments</NavLink>}
           {can('ADMIN') && <NavLink to="/users">Người dùng</NavLink>}
           {can('ADMIN') && <NavLink to="/sync-history">Lịch sử đồng bộ</NavLink>}
         </nav>

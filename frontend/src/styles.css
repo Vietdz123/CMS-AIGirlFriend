@@ -306,3 +306,8 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; }
 .connect-card { max-width: 520px; width: 100%; padding: 28px; }
 .connect-card h1 { margin-top: 0; font-size: 22px; }
 .connect-card ul { padding-left: 18px; }
+/* Payments */
+.receipt-preview { max-width: 100%; max-height: 220px; object-fit: contain; border: 1px solid var(--border); border-radius: 6px; }
+.receipt-modal { width: min(720px, 94vw); }
+.receipt-full { max-width: 100%; max-height: 70vh; object-fit: contain; align-self: center; }
+a.button { display: inline-flex; align-items: center; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; color: inherit; text-decoration: none; }

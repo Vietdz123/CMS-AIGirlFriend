@@ -381,3 +381,27 @@ model GaCampaignRevenue {
 
   @@index([installDate])
 }
+
+enum PaymentDirection {
+  IN // khoản nhận
+  OUT // khoản chi
+}
+
+/// Khoản tiền nhận / chi nhập tay trên trang Payments, kèm ảnh hoá đơn (tuỳ chọn, lưu ngay trong DB để sao lưu cùng).
+model Payment {
+  id            String           @id @default(cuid())
+  direction     PaymentDirection
+  date          DateTime         @db.Date
+  party         String // người trả (khoản nhận) hoặc người nhận (khoản chi)
+  amount        Decimal          @db.Decimal(18, 2)
+  currency      String           @default("VND")
+  note          String?
+  receipt       Bytes?
+  receiptType   String? // image/jpeg, image/png…
+  receiptName   String?
+  createdById   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([date])
+}

@@ -8,6 +8,7 @@ import { FxModule } from './common/fx.module';
 import { FacebookModule } from './facebook/facebook.module';
 import { GoogleAdsModule } from './google-ads/google-ads.module';
 import { IapModule } from './iap/iap.module';
+import { PaymentsModule } from './payments/payments.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { PrismaModule } from './prisma/prisma.module';
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     FacebookModule,
     GoogleAdsModule,
     IapModule,
+    PaymentsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
