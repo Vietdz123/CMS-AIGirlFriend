@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError, del, qs, token } from '../api';
 import { useAuth } from '../auth';
 import { DateRangePicker } from '../components/DateRangePicker';
+import { SearchSelect } from '../components/SearchSelect';
 import { daysAgo } from '../format';
 
 type Direction = 'IN' | 'OUT';
@@ -20,6 +21,8 @@ interface Payment {
 }
 
 const CURRENCIES = ['VND', 'USD', 'HKD'];
+/** Người thanh toán / người nhận tiền: chỉ 2 người này (trùng danh sách PARTIES ở backend). */
+export const PARTIES = ['Trịnh Tiến Việt', 'Nguyễn Dương Huyền Trang'];
 const LABEL: Record<Direction, string> = { IN: 'Nhận', OUT: 'Chi' };
 
 const amountText = (v: number, currency: string) => {
@@ -67,14 +70,27 @@ function useReceiptUrl(id: string | null) {
 export function PaymentsPage() {
   const { can } = useAuth();
   const queryClient = useQueryClient();
-  const [range, setRange] = useState({ from: daysAgo(29), to: daysAgo(0) });
-  const [direction, setDirection] = useState<'' | Direction>('');
+  // Mặc định "Lifetime": không lọc ngày (mọi khoản, từ hoá đơn xa nhất tới hôm nay); chọn ngày thì lọc theo khoảng đó.
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
+  const bounds = useQuery({
+    queryKey: ['payments', 'range'],
+    queryFn: () => api<{ first: string | null; last: string | null }>('/payments/range'),
+  });
+  const today = daysAgo(0);
+  const shown = range ?? { from: bounds.data?.first ?? today, to: today };
+  // Mặc định xem khoản chi.
+  const [direction, setDirection] = useState<'' | Direction>('OUT');
   const [search, setSearch] = useState('');
+  const [parties, setParties] = useState<string[]>([]);
   const [editing, setEditing] = useState<Payment | 'new' | null>(null);
   const [viewing, setViewing] = useState<Payment | null>(null);
 
-  const q = qs({ ...range, direction, q: search.trim() || undefined });
+  const q = qs({ ...(range ?? {}), direction, parties, q: search.trim() || undefined });
   const data = useQuery({ queryKey: ['payments', q], queryFn: () => api<Payment[]>(`/payments?${q}`) });
+  const partyList = useQuery({
+    queryKey: ['payments', 'parties'],
+    queryFn: () => api<{ party: string; count: number }[]>('/payments/parties'),
+  });
   const remove = useMutation({
     mutationFn: (id: string) => del(`/payments/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['payments'] }),
@@ -98,7 +114,10 @@ export function PaymentsPage() {
       </header>
 
       <div className="filters">
-        <DateRangePicker from={range.from} to={range.to} onChange={setRange} />
+        <DateRangePicker from={shown.from} to={shown.to} onChange={setRange} />
+        <button className={range ? '' : 'primary'} title="Mọi khoản, từ hoá đơn xa nhất tới hôm nay" onClick={() => setRange(null)}>
+          Lifetime
+        </button>
         <div className="seg">
           {(['', 'IN', 'OUT'] as const).map((d) => (
             <button key={d} className={direction === d ? 'active' : ''} onClick={() => setDirection(d)}>
@@ -106,21 +125,36 @@ export function PaymentsPage() {
             </button>
           ))}
         </div>
-        <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm người / ghi chú…" />
+        <label>
+          Người trả / nhận
+          <SearchSelect value={parties} onChange={setParties} allLabel="Tất cả" placeholder="Gõ tên…" width={220}
+            options={PARTIES.map((p) => {
+              const n = partyList.data?.find((x) => x.party === p)?.count ?? 0;
+              return { value: p, label: `${p} (${n})` };
+            })} />
+        </label>
+        <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm trong ghi chú / tên…" />
       </div>
 
-      {totals.size > 0 && (
-        <section className="kpis">
-          {[...totals].map(([cur, t]) => (
-            <div key={cur} className="card kpi">
-              <div className="kpi-label">{cur}: nhận {amountText(t.in, cur)} · chi {amountText(t.out, cur)}</div>
-              <div className={`kpi-value ${t.in - t.out < 0 ? 'error-text' : 'success-text'}`}>
-                {t.in - t.out < 0 ? '−' : '+'}{amountText(Math.abs(t.in - t.out), cur)}
-              </div>
+      {/* Mỗi loại tiền 1 hàng: tổng nhận, tổng chi, chênh lệch (theo đúng bộ lọc đang chọn). */}
+      {[...totals].map(([cur, t]) => (
+        <section key={cur} className="kpis">
+          <div className="card kpi">
+            <div className="kpi-label">Tổng nhận ({cur})</div>
+            <div className="kpi-value success-text">+{amountText(t.in, cur)}</div>
+          </div>
+          <div className="card kpi">
+            <div className="kpi-label">Tổng chi ({cur})</div>
+            <div className="kpi-value error-text">−{amountText(t.out, cur)}</div>
+          </div>
+          <div className="card kpi">
+            <div className="kpi-label">Chênh lệch ({cur})</div>
+            <div className={`kpi-value ${t.in - t.out < 0 ? 'error-text' : 'success-text'}`}>
+              {t.in - t.out < 0 ? '−' : '+'}{amountText(Math.abs(t.in - t.out), cur)}
             </div>
-          ))}
+          </div>
         </section>
-      )}
+      ))}
 
       <div className="card table-card">
         <table>
@@ -172,9 +206,9 @@ export function PaymentsPage() {
 
 function PaymentForm({ payment, onClose }: { payment: Payment | null; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [direction, setDirection] = useState<Direction>(payment?.direction ?? 'IN');
+  const [direction, setDirection] = useState<Direction>(payment?.direction ?? 'OUT');
   const [date, setDate] = useState(payment?.date ?? daysAgo(0));
-  const [party, setParty] = useState(payment?.party ?? '');
+  const [party, setParty] = useState(payment?.party ?? PARTIES[0]);
   const [amount, setAmount] = useState(payment ? String(payment.amount) : '');
   const [currency, setCurrency] = useState(payment?.currency ?? 'VND');
   const [note, setNote] = useState(payment?.note ?? '');
@@ -216,7 +250,11 @@ function PaymentForm({ payment, onClose }: { payment: Payment | null; onClose: (
         <label>Ngày {direction === 'IN' ? 'nhận' : 'chi'}<input type="date" required value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label>
           {direction === 'IN' ? 'Người thanh toán' : 'Người nhận tiền'}
-          <input required maxLength={200} value={party} onChange={(e) => setParty(e.target.value)} placeholder="Tên người / công ty" />
+          <select required value={party} onChange={(e) => setParty(e.target.value)}>
+            {/* Khoản cũ nhập tên khác thì vẫn hiện tên đó để không mất khi mở sửa. */}
+            {!PARTIES.includes(party) && <option value={party}>{party}</option>}
+            {PARTIES.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
         </label>
         <div className="row">
           <label style={{ flex: 1 }}>

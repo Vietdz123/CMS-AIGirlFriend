@@ -13,6 +13,8 @@ import { PrismaService } from '../prisma/prisma.service';
 const MAX_RECEIPT_BYTES = 8 * 1024 * 1024;
 const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'image/gif'];
 const DIRECTIONS: PaymentDirection[] = ['IN', 'OUT'];
+/** Người thanh toán / người nhận tiền chỉ được là 1 trong 2 người này (trùng PARTIES ở frontend). */
+const PARTIES = ['Trịnh Tiến Việt', 'Nguyễn Dương Huyền Trang'];
 
 type Body = Record<string, string | undefined>;
 /**
@@ -28,13 +30,32 @@ type UploadedImage = { buffer: Buffer; mimetype: string; originalname: string; s
 export class PaymentsController {
   constructor(private prisma: PrismaService) {}
 
-  /** Query: from, to (YYYY-MM-DD, tuỳ chọn), direction (IN | OUT), q (tìm theo người / ghi chú). */
+  /** Ngày sớm nhất và muộn nhất có khoản tiền (khoảng "Lifetime" của trang Payments). */
+  @Get('range')
+  async range() {
+    const r = await this.prisma.payment.aggregate({ _min: { date: true }, _max: { date: true } });
+    const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+    return { first: iso(r._min.date), last: iso(r._max.date) };
+  }
+
+  /** Danh sách người thanh toán / người nhận đã nhập (cho ô lọc), kèm số khoản của mỗi người. */
+  @Get('parties')
+  async parties() {
+    const rows = await this.prisma.payment.groupBy({ by: ['party'], _count: { _all: true }, orderBy: { party: 'asc' } });
+    return rows.map((r) => ({ party: r.party, count: r._count._all }));
+  }
+
+  /**
+   * Query: from, to (YYYY-MM-DD, tuỳ chọn), direction (IN | OUT), parties (tên người, phân tách bằng dấu phẩy),
+   * q (tìm theo người / ghi chú).
+   */
   @Get()
   async list(@Query() q: Record<string, string | undefined>) {
     if ((q.from && !isIsoDate(q.from)) || (q.to && !isIsoDate(q.to))) throw new BadRequestException('from/to phải có dạng YYYY-MM-DD');
     const where: Prisma.PaymentWhereInput = {
       ...(q.from || q.to ? { date: { ...(q.from ? { gte: toDbDate(q.from) } : {}), ...(q.to ? { lte: toDbDate(q.to) } : {}) } } : {}),
       ...(q.direction && DIRECTIONS.includes(q.direction as PaymentDirection) ? { direction: q.direction as PaymentDirection } : {}),
+      ...(q.parties ? { party: { in: q.parties.split(',').map((p) => p.trim()).filter(Boolean) } } : {}),
       ...(q.q?.trim() ? { OR: [{ party: { contains: q.q.trim(), mode: 'insensitive' } }, { note: { contains: q.q.trim(), mode: 'insensitive' } }] } : {}),
     };
     const rows = await this.prisma.payment.findMany({
@@ -96,8 +117,8 @@ function parse(b: Body) {
   const direction = b.direction as PaymentDirection;
   if (!DIRECTIONS.includes(direction)) throw new BadRequestException('Chọn khoản nhận hoặc khoản chi');
   if (!isIsoDate(b.date)) throw new BadRequestException('Ngày phải có dạng YYYY-MM-DD');
-  const party = b.party?.trim();
-  if (!party) throw new BadRequestException('Nhập người thanh toán / người nhận');
+  const party = b.party?.trim().normalize('NFC');
+  if (!party || !PARTIES.includes(party)) throw new BadRequestException(`Người thanh toán / nhận phải là ${PARTIES.join(' hoặc ')}`);
   const amount = Number(String(b.amount ?? '').replace(/[\s,]/g, ''));
   if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Khoản tiền phải là số lớn hơn 0');
   const currency = (b.currency || 'VND').toUpperCase();

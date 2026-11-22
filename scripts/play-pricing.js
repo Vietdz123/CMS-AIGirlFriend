@@ -11,6 +11,9 @@
  *     → đặt lại giá US của sản phẩm đó trước, rồi tính các nước trong RULES theo giá US mới.
  *   node scripts/play-pricing.js com.muchie.ai.chat --us-percent -15 [--apply]
  *     → CHỈ đổi giá US: giá US hiện tại × (1 + n/100), làm tròn tới cent; mọi nước khác giữ nguyên (bỏ qua RULES).
+ *   node scripts/play-pricing.js com.muchie.ai.chat --region-percent TH=-20 [--apply]
+ *     → CHỈ đổi giá của nước đó theo phần trăm so với giá ĐANG CHẠY ở nước đó (tiền địa phương), làm tròn về mức
+ *       giá thường dùng ở nước đó; mọi nước khác (kể cả US) giữ nguyên. Có thể lặp lại cho nhiều nước.
  *   node scripts/play-pricing.js com.muchie.ai.chat --only FR,DE [--apply]
  *     → chỉ đổi các nước này (phải có trong RULES); các nước khác trong RULES giữ nguyên dù tỷ giá đã đổi.
  *
@@ -50,6 +53,17 @@ if (usPercentArg !== null && !(Number.isFinite(usPercentArg) && usPercentArg > -
   console.error('--us-percent cần một số > -100, ví dụ --us-percent -15');
   process.exit(1);
 }
+/** --region-percent <nước>=<n>: đổi giá đang chạy của nước đó theo phần trăm (âm = giảm), có thể lặp lại. */
+const regionPercents = new Map();
+args.forEach((a, i) => {
+  if (a !== '--region-percent') return;
+  const [region, pct] = String(args[i + 1] ?? '').split('=');
+  if (!/^[A-Za-z]{2}$/.test(region ?? '') || !(Number(pct) > -100) || !Number.isFinite(Number(pct))) {
+    console.error('--region-percent cần dạng <mã nước>=<phần trăm>, ví dụ TH=-20');
+    process.exit(1);
+  }
+  regionPercents.set(region.toUpperCase(), Number(pct));
+});
 /** --only <mã nước,...>: chỉ đổi các nước này. */
 const onlyArg = args[args.indexOf('--only') + 1];
 const only = args.includes('--only') ? new Set(String(onlyArg ?? '').toUpperCase().split(',').filter(Boolean)) : null;
@@ -60,7 +74,7 @@ if (only) {
     process.exit(1);
   }
 }
-const [pkg] = args.filter((a, i) => !a.startsWith('--') && !['--set-us', '--only', '--us-percent'].includes(args[i - 1]));
+const [pkg] = args.filter((a, i) => !a.startsWith('--') && !['--set-us', '--only', '--us-percent', '--region-percent'].includes(args[i - 1]));
 if (!pkg) {
   console.error('Cách dùng: node scripts/play-pricing.js <packageName> [--apply]');
   process.exit(1);
@@ -122,6 +136,20 @@ async function listAll(client, url, key) {
   return out;
 }
 
+/**
+ * Làm tròn giá mới cho tự nhiên mà vẫn sát % mong muốn:
+ * - giá cũ có đuôi .99 (vd A$31.99, SAR 57.99) → về .99 gần nhất (A$25.59 → A$25.99);
+ * - giá cũ là bội của 5 (vd THB 950) → bội của 5 gần nhất;
+ * - giá cũ là số nguyên → số nguyên gần nhất; còn lại giữ 2 số lẻ.
+ */
+function roundLocal(value, oldValue) {
+  const cents = Math.round((oldValue % 1) * 100);
+  if (cents === 99) return Math.max(0.99, Math.round(value + 0.01) - 0.01);
+  const isMultiple = (step) => Math.abs(oldValue / step - Math.round(oldValue / step)) < 1e-9;
+  const step = isMultiple(5) ? 5 : isMultiple(1) ? 1 : 0.01;
+  return Math.max(step, Number((Math.round(value / step) * step).toFixed(2)));
+}
+
 /** Giá quy đổi của Google Play cho 1 mức giá USD (cache theo mức giá). */
 const conversions = new Map();
 async function convert(client, usd) {
@@ -163,6 +191,21 @@ async function plan(client, kind, product) {
         changed: !samePrice(usCfg.price, after) });
       usCfg.price = after;
     }
+    if (regionPercents.size) {
+      // Chỉ đổi giá đang chạy của các nước được chỉ định theo %, làm tròn kiểu địa phương; mọi nước khác giữ nguyên.
+      for (const [region, pct] of regionPercents) {
+        const cfg = unit.configs.find((c) => c.regionCode === region);
+        if (!cfg?.price) {
+          rows.push({ unit, region, divisor: 1, skip: 'chưa bán ở nước này' });
+          continue;
+        }
+        const after = toMoney(cfg.price.currencyCode, roundLocal(fromMoney(cfg.price) * (1 + pct / 100), fromMoney(cfg.price)));
+        rows.push({ unit, region, divisor: 1, us: usCfg.price, usd: fromMoney(usCfg.price), before: cfg.price, after,
+          changed: !samePrice(cfg.price, after) });
+        cfg.price = after;
+      }
+      continue;
+    }
     if (usPercentArg !== null) {
       // Chỉ đổi giá US; các nước khác (kể cả nước trong RULES) giữ nguyên.
       const usd = Math.round(fromMoney(usCfg.price) * (1 + usPercentArg / 100) * 100) / 100;
@@ -199,7 +242,8 @@ async function plan(client, kind, product) {
 async function main() {
   const client = await auth.getClient();
   console.log(`App: ${pkg}   ${apply ? 'ÁP DỤNG' : 'XEM TRƯỚC (không sửa gì)'}`
-    + `${usPercentArg !== null ? `   CHỈ ĐỔI GIÁ US ${usPercentArg > 0 ? '+' : ''}${usPercentArg}%` : ''}\n`);
+    + `${usPercentArg !== null ? `   CHỈ ĐỔI GIÁ US ${usPercentArg > 0 ? '+' : ''}${usPercentArg}%` : ''}`
+    + `${regionPercents.size ? `   CHỈ ĐỔI ${[...regionPercents].map(([r, p]) => `${r} ${p > 0 ? '+' : ''}${p}%`).join(', ')} (so với giá đang chạy)` : ''}\n`);
 
   const products = [
     ...(await listAll(client, `${API}/applications/${pkg}/oneTimeProducts`, 'oneTimeProducts')).map((p) => ({ kind: 'onetime', p })),
