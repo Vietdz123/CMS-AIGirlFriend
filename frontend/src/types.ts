@@ -134,6 +134,8 @@ export interface FbCampaign {
   installs: number;
   /** Conversion value nền tảng báo (USD). Facebook luôn 0. */
   convValue: number;
+  /** Doanh thu GA4 (USD) của người dùng từ chiến dịch, cài trong khoảng ngày (Google Ads). */
+  gaRevenue?: number;
   account: { id: string; name: string };
 }
 
@@ -269,6 +271,17 @@ export interface GadsHourly {
 }
 
 /** Số liệu chi phí của 1 ngày lần đầu CMS ghi nhận và hiện tại, kèm mọi phiên bản (USD). */
+/** Chi phí 1 chiến dịch Google Ads: tổng mốc 1,5 ngày so với hiện tại (USD) trong khoảng ngày. */
+export interface CampaignSpendChange {
+  campaignId: string;
+  name: string;
+  first: number;
+  latest: number;
+  days: number;
+  changedDays: number;
+  byDate: { date: string; first: number; latest: number }[];
+}
+
 export interface SpendChange {
   date: string;
   source: string;

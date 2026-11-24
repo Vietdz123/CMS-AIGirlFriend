@@ -7,7 +7,7 @@ import { AdmobApiService } from '../admob/admob-api.service';
 import { batches, minDate } from '../common/batches';
 import { saveBudgetDays } from '../common/budget-history';
 import { decrypt } from '../common/crypto';
-import { recordSpendSnapshots } from '../common/spend-history';
+import { recordCampaignSpendSnapshots, recordSpendSnapshots } from '../common/spend-history';
 import { FxService } from '../common/fx.service';
 import { addDays, toDbDate, todayIn } from '../common/dates';
 import { PrismaService } from '../prisma/prisma.service';
@@ -155,6 +155,8 @@ export class GoogleAdsSyncService {
       const yesterday = addDays(todayIn(a.timeZone), -1);
       await recordSpendSnapshots(this.prisma, GOOGLE_SOURCE, a.id, addDays(yesterday, -(LAG_WINDOW_DAYS - 1)), yesterday)
         .catch((e) => this.logger.warn(`Spend history ${a.id}: ${e?.message ?? e}`));
+      await recordCampaignSpendSnapshots(this.prisma, GOOGLE_SOURCE, a.id, addDays(yesterday, -(LAG_WINDOW_DAYS - 1)), yesterday)
+        .catch((e) => this.logger.warn(`Campaign spend history ${a.id}: ${e?.message ?? e}`));
     }
     await this.recordBalances();
   }

@@ -331,6 +331,22 @@ model SpendSnapshot {
   @@index([date])
 }
 
+/// Giống SpendSnapshot nhưng theo từng chiến dịch: mỗi lần quét thấy tổng của (ngày, chiến dịch) khác lần ghi trước thì
+/// thêm 1 dòng. Dùng để biết chiến dịch nào bị Google điều chỉnh chi phí (trừ click không hợp lệ…).
+model CampaignSpendSnapshot {
+  id              BigInt   @id @default(autoincrement())
+  source          String // google
+  accountId       String
+  campaignId      String
+  date            DateTime @db.Date
+  spendMicros     BigInt // USD
+  convValueMicros BigInt // USD
+  installs        BigInt
+  capturedAt      DateTime @default(now())
+
+  @@index([source, date, campaignId, capturedAt])
+}
+
 /// Số dư tài khoản Google Ads (account budget) ghi mỗi ngày khi có thay đổi: hạn mức đã nạp, đã tiêu, tổng điều chỉnh
 /// (tín dụng Google cộng / trừ vào tài khoản). Tiền gốc của tài khoản (micros).
 model GadsBalanceSnapshot {

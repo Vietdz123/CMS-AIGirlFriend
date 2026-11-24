@@ -5,6 +5,10 @@ const key = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Mốc gốc của 1 ngày: khi ngày đó đã qua 1,5 ngày (12:00 trưa hôm sau theo giờ tài khoản), số đã gần đủ. */
 export const BASELINE_HOUR = 12;
+/** Các lần ghi cách nhau dưới khoảng này coi là cùng 1 lượt quét (mọi tài khoản ghi gần như cùng lúc). */
+const RUN_WINDOW_MS = 10 * 60_000;
+/** Mốc theo chiến dịch phải được ghi trong vòng chừng này ngày sau ngày chạy (bản sao lưu 02:30 ngày +2 vẫn hợp lệ). */
+const BASELINE_MAX_DAYS = 4;
 
 /** Ngày đã đủ 1,5 ngày tại thời điểm `at` (giờ tài khoản `timeZone`) hay chưa. */
 function settled(date: string, at: Date, timeZone: string) {
@@ -92,14 +96,22 @@ export async function spendHistory(
   const out: SpendChange[] = [];
   for (const [k, list] of groups) {
     const [date, source] = k.split('|');
-    // Cộng dồn theo thời gian: giữ số mới nhất của từng tài khoản, mỗi lần 1 tài khoản đổi là 1 phiên bản mới của ngày.
+    // Cộng dồn theo thời gian: giữ số mới nhất của từng tài khoản. Các dòng của cùng 1 lượt quét (nhiều tài khoản ghi
+    // cách nhau vài mili giây) gộp thành 1 phiên bản, để mốc không chỉ chứa số của tài khoản ghi trước.
     const byAccount = new Map<string, (typeof list)[number]>();
     const versions: SpendChange['versions'] = [];
+    const runs: (typeof list)[] = [];
     for (const r of list) {
-      byAccount.set(r.accountId, r);
+      const run = runs.at(-1);
+      if (run && r.capturedAt.getTime() - run[0].capturedAt.getTime() < RUN_WINDOW_MS) run.push(r);
+      else runs.push([r]);
+    }
+    for (const run of runs) {
+      for (const r of run) byAccount.set(r.accountId, r);
+      const r = run.at(-1)!;
       const all = [...byAccount.values()];
       const v = {
-        early: !settled(date, r.capturedAt, q.timeZones.get(r.accountId) ?? 'UTC'),
+        early: run.some((x) => !settled(date, x.capturedAt, q.timeZones.get(x.accountId) ?? 'UTC')),
         at: r.capturedAt.toISOString(),
         spend: all.reduce((s, x) => s + usd(x.spendMicros), 0),
         convValue: all.reduce((s, x) => s + usd(x.convValueMicros), 0),
@@ -121,4 +133,105 @@ export async function spendHistory(
     });
   }
   return out.sort((a, b) => b.date.localeCompare(a.date) || a.source.localeCompare(b.source));
+}
+
+/**
+ * Như recordSpendSnapshots nhưng theo từng chiến dịch: với mỗi (ngày, chiến dịch) của 1 tài khoản trong [from, to],
+ * nếu tổng chi phí / conversion value / installs khác lần ghi gần nhất thì thêm 1 dòng CampaignSpendSnapshot.
+ */
+export async function recordCampaignSpendSnapshots(prisma: PrismaService, source: string, accountId: string, from: string, to: string) {
+  const range = { gte: toDbDate(from), lte: toDbDate(to) };
+  const [current, previous] = await Promise.all([
+    prisma.adSpendStat.groupBy({
+      by: ['date', 'campaignId'],
+      where: { source, accountId, date: range },
+      _sum: { spendMicros: true, convValueMicros: true, installs: true },
+    }),
+    prisma.campaignSpendSnapshot.findMany({
+      where: { source, accountId, date: range },
+      orderBy: { capturedAt: 'desc' },
+      distinct: ['date', 'campaignId'],
+    }),
+  ]);
+  const last = new Map(previous.map((p) => [`${key(p.date)}|${p.campaignId}`, p]));
+  const changed = current
+    .map((c) => ({
+      source,
+      accountId,
+      campaignId: c.campaignId,
+      date: c.date,
+      spendMicros: c._sum.spendMicros ?? 0n,
+      convValueMicros: c._sum.convValueMicros ?? 0n,
+      installs: c._sum.installs ?? 0n,
+    }))
+    .filter((c) => {
+      const p = last.get(`${key(c.date)}|${c.campaignId}`);
+      return !p || p.spendMicros !== c.spendMicros || p.convValueMicros !== c.convValueMicros || p.installs !== c.installs;
+    });
+  if (changed.length) await prisma.campaignSpendSnapshot.createMany({ data: changed });
+}
+
+export interface CampaignSpendChange {
+  campaignId: string;
+  name: string;
+  /** Tổng chi phí mốc 1,5 ngày và hiện tại (USD) của các ngày trong khoảng đã có mốc. */
+  first: number;
+  latest: number;
+  /** Số ngày có mốc; số ngày bị điều chỉnh. */
+  days: number;
+  changedDays: number;
+  /** Từng ngày: mốc → hiện tại. */
+  byDate: { date: string; first: number; latest: number }[];
+}
+
+/**
+ * Chi phí từng chiến dịch: mốc 1,5 ngày (lần ghi đầu tiên sau 12:00 trưa hôm sau, giờ tài khoản) so với lần ghi mới
+ * nhất. Ngày chưa đủ 1,5 ngày bị bỏ qua.
+ */
+export async function campaignSpendHistory(
+  prisma: PrismaService,
+  q: { from: string; to: string; source: string; accountIds?: string[] | null; timeZones: Map<string, string> },
+): Promise<CampaignSpendChange[]> {
+  const rows = await prisma.campaignSpendSnapshot.findMany({
+    where: {
+      source: q.source,
+      date: { gte: toDbDate(q.from), lte: toDbDate(q.to) },
+      ...(q.accountIds ? { accountId: { in: q.accountIds } } : {}),
+    },
+    orderBy: { capturedAt: 'asc' },
+  });
+  const names = new Map(
+    (await prisma.gadsCampaign.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.campaignId))] } }, select: { id: true, name: true } }))
+      .map((c) => [c.id, c.name]),
+  );
+  const usd = (v: bigint) => Number(v) / 1e6;
+  // (chiến dịch, ngày) -> mốc + mới nhất.
+  const cells = new Map<string, { campaignId: string; date: string; first: number | null; latest: number; stale: boolean }>();
+  for (const r of rows) {
+    const date = key(r.date);
+    const k = `${r.campaignId}|${date}`;
+    const c = cells.get(k) ?? { campaignId: r.campaignId, date, first: null as number | null, latest: 0, stale: false };
+    // Mốc chỉ hợp lệ khi ghi trong vòng BASELINE_MAX_DAYS sau ngày chạy; ghi muộn hơn thì Google đã điều chỉnh xong,
+    // so với số hiện tại sẽ ra chênh lệch gần 0 (sai), nên coi như ngày đó không có mốc.
+    const fresh = r.capturedAt.getTime() <= new Date(`${date}T00:00:00Z`).getTime() + BASELINE_MAX_DAYS * 86_400_000;
+    if (c.first === null && c.stale === false && settled(date, r.capturedAt, q.timeZones.get(r.accountId) ?? 'UTC')) {
+      if (fresh) c.first = usd(r.spendMicros);
+      else c.stale = true;
+    }
+    c.latest = usd(r.spendMicros);
+    cells.set(k, c);
+  }
+  const out = new Map<string, CampaignSpendChange>();
+  for (const c of cells.values()) {
+    if (c.first === null) continue;
+    const o = out.get(c.campaignId) ?? { campaignId: c.campaignId, name: names.get(c.campaignId) ?? c.campaignId, first: 0, latest: 0, days: 0, changedDays: 0, byDate: [] };
+    o.first += c.first;
+    o.latest += c.latest;
+    o.days += 1;
+    if (Math.abs(c.latest - c.first) >= 0.005) o.changedDays += 1;
+    o.byDate.push({ date: c.date, first: c.first, latest: c.latest });
+    out.set(c.campaignId, o);
+  }
+  for (const o of out.values()) o.byDate.sort((a, b) => b.date.localeCompare(a.date));
+  return [...out.values()].sort((a, b) => (a.latest - a.first) - (b.latest - b.first));
 }

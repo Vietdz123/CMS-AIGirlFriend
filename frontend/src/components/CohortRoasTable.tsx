@@ -18,10 +18,10 @@ const FULL_SPEND = 0.8;
 /** Chiến dịch Hồng Kông: tên kết thúc bằng "HK" (cùng quy tắc với thuế 3% trên Monet & UA). */
 const isHk = (name: string) => name.trim().toUpperCase().endsWith('HK');
 /** Nguồn doanh thu cho cột ROAS: Google Ads (conversion value, cửa sổ 7 ngày) hoặc GA4 (doanh thu thật, không giới hạn). */
-type Source = 'gads' | 'ga4';
+export type Source = 'gads' | 'ga4';
 
 /** Trạng thái GA4: mốc DN chỉ đủ khi ngày cài + N < hôm nay - 1 (GA4 xử lý trễ khoảng 1 ngày). */
-function gaStatus(date: string, n: number): Status {
+export function gaStatus(date: string, n: number): Status {
   const age = Math.round((Date.parse(daysAgo(0)) - Date.parse(date)) / 86_400_000);
   return age > n + 1 ? 'final' : 'partial';
 }
@@ -30,7 +30,7 @@ function gaStatus(date: string, n: number): Status {
  * Ô ROAS: xanh khi hoà vốn trở lên (≥ 1x), đỏ khi dưới. Số in nghiêng khi chưa đủ ngày (tích luỹ tới hiện
  * tại, còn tăng), số thường khi đã chốt. "—" khi không có chi phí.
  */
-function RoasCell({ v, status }: { v: number | null; status: Status }) {
+export function RoasCell({ v, status }: { v: number | null; status: Status }) {
   if (v === null) return <td className="num muted">—</td>;
   const tone = v >= 1 ? 'pos' : 'neg';
   if (status === 'partial') {
@@ -194,6 +194,34 @@ export function CohortRoasTable() {
   );
 }
 
+/**
+ * Hàng phụ dưới 1 dòng: ROAS các mốc theo nguồn còn lại (đang xem GA4 thì hiện Google Ads và ngược lại) để so sánh.
+ * `lead` = số ô trống trước các cột ROAS.
+ */
+function OtherSourceRow({ source, lead, days, date, roas, gaRoas, status, value }: {
+  source: Source;
+  lead: number;
+  days: string[];
+  date: string;
+  roas: Record<string, number | null>;
+  gaRoas: Record<string, number | null>;
+  status: Record<string, Status>;
+  /** Doanh thu tới hiện tại theo nguồn còn lại (Rev GA4 hoặc Conv. value). */
+  value: number;
+}) {
+  const other: Source = source === 'ga4' ? 'gads' : 'ga4';
+  return (
+    <tr className="sub-row">
+      <td className="small muted">↳ {other === 'ga4' ? 'GA4' : 'Google Ads'}</td>
+      {lead > 0 && <td colSpan={lead} />}
+      {days.map((d) => (other === 'ga4'
+        ? <RoasCell key={d} v={gaRoas[d] ?? null} status={gaStatus(date, Number(d.slice(1)))} />
+        : <RoasCell key={d} v={roas[d] ?? null} status={status[d]} />))}
+      <td className="num small muted" title={other === 'ga4' ? 'Rev GA4 tới hiện tại' : 'Conv. value tới hiện tại'}>{money(value)}</td>
+    </tr>
+  );
+}
+
 /** Các chiến dịch chạy trong 1 ngày: budget/ngày, chi phí, installs, CPI, conv. value, ROAS D0…D30 của ngày đó. */
 function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
   date: string;
@@ -255,11 +283,17 @@ function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
           {DAYS.map((d) => <RoasCell key={d} v={totalRoas(d)} status={totalStatus(d)} />)}
           <td className="num"><b>{money(sum((c) => (source === 'ga4' ? c.gaRevenue : c.convValue)))}</b></td>
         </tr>
+        <OtherSourceRow source={source} lead={4} days={DAYS} date={date}
+          roas={Object.fromEntries(DAYS.map((d) => [d, totalSpend ? sum((c) => (c.roas[d] ?? 0) * c.spend) / totalSpend : null]))}
+          gaRoas={Object.fromEntries(DAYS.map((d) => [d, totalSpend ? sum((c) => (c.gaRoas[d] ?? 0) * c.spend) / totalSpend : null]))}
+          status={Object.fromEntries(DAYS.map((d) => [d, rows.every((c) => c.status[d] === 'final') ? 'final' : 'partial']))}
+          value={sum((c) => (source === 'ga4' ? c.convValue : c.gaRevenue))} />
         {rows.map((c) => {
           const usage = c.budget ? c.spend / c.budget : null;
           const full = usage !== null && usage >= FULL_SPEND;
           return (
-          <tr key={c.id}>
+          <Fragment key={c.id}>
+          <tr>
             <td className={`label-cell ${isHk(c.name) ? 'pos' : ''}`}
               title={`${c.name}\n${c.id}${c.storeId ? `\n${c.storeId}` : ''}${isHk(c.name) ? '\nChiến dịch Hồng Kông' : ''}`}>
               {c.name}
@@ -280,6 +314,7 @@ function DayCampaigns({ date, campaignIds, storeIds, source, days }: {
               {money(source === 'ga4' ? c.gaRevenue : c.convValue)}
             </td>
           </tr>
+          </Fragment>
           );
         })}
       </tbody>

@@ -5,7 +5,7 @@ import { AppAccessService } from '../auth/app-access.service';
 import { AuthUser, CurrentUser, Roles } from '../auth/decorators';
 import { allowedAdAccountIds } from '../common/ad-campaigns';
 import { isIsoDate } from '../common/dates';
-import { spendHistory } from '../common/spend-history';
+import { campaignSpendHistory, spendHistory } from '../common/spend-history';
 import { FacebookSyncService } from '../facebook/facebook-sync.service';
 import { GoogleAdsSyncService } from '../google-ads/google-ads-sync.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -106,6 +106,23 @@ export class SyncController {
       from: q.from,
       to: q.to,
       sources: ['google'],
+      accountIds,
+      timeZones: new Map(accounts.map((a) => [a.id, a.timeZone])),
+    });
+  }
+
+  /** Chi phí Google Ads từng chiến dịch: mốc 1,5 ngày so với hiện tại, để biết chiến dịch nào bị điều chỉnh. Query: from, to. */
+  @Get('campaign-spend-history')
+  async campaignSpendHistory(@CurrentUser() user: AuthUser, @Query() q: Record<string, string | undefined>) {
+    if (!isIsoDate(q.from) || !isIsoDate(q.to) || q.from > q.to) {
+      throw new BadRequestException('from/to phải có dạng YYYY-MM-DD và from <= to');
+    }
+    const accountIds = await allowedAdAccountIds(this.prisma, 'google', await this.access.allowedAppIds(user));
+    const accounts = await this.prisma.gadsAccount.findMany({ select: { id: true, timeZone: true } });
+    return campaignSpendHistory(this.prisma, {
+      from: q.from,
+      to: q.to,
+      source: 'google',
       accountIds,
       timeZones: new Map(accounts.map((a) => [a.id, a.timeZone])),
     });

@@ -67,6 +67,18 @@ export async function listCampaigns(prisma: PrismaService, source: 'facebook' | 
     WHERE ${Prisma.join(where, ' AND ')}
     ORDER BY sp.spend_micros DESC NULLS LAST, c.name`;
 
+  // Doanh thu GA4 (doanh thu quảng cáo tới hiện tại của người dùng từ chiến dịch, cài trong khoảng ngày): chỉ Google Ads.
+  const ga = new Map<string, number>();
+  if (source === 'google' && rows.length) {
+    const gaFilter = [Prisma.sql`"campaignId" IN (${Prisma.join(rows.map((r) => r.id))})`];
+    if (q.from) gaFilter.push(Prisma.sql`"installDate" >= ${q.from}::date`);
+    if (q.to) gaFilter.push(Prisma.sql`"installDate" <= ${q.to}::date`);
+    const gaRows = await prisma.$queryRaw<{ campaign_id: string; total: bigint }[]>`
+      SELECT "campaignId" AS campaign_id, SUM("revenueMicros")::bigint AS total
+      FROM "GaCampaignRevenue" WHERE ${Prisma.join(gaFilter, ' AND ')} GROUP BY 1`;
+    for (const g of gaRows) ga.set(g.campaign_id, Number(g.total) / 1e6);
+  }
+
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -79,6 +91,8 @@ export async function listCampaigns(prisma: PrismaService, source: 'facebook' | 
     installs: Number(r.installs ?? 0),
     /** Conversion value nền tảng báo (USD); Facebook hiện luôn 0. */
     convValue: Number(r.conv_value_micros ?? 0) / 1e6,
+    /** Doanh thu GA4 (USD) của người dùng từ chiến dịch, cài trong khoảng ngày (Google Ads); Facebook luôn 0. */
+    gaRevenue: ga.get(r.id) ?? 0,
   }));
 }
 

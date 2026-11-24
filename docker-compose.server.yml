@@ -43,7 +43,7 @@ services:
       PGUSER: admob
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: admob_cms
-      KEEP: "14"
+      KEEP: "30"
     volumes:
       - ./scripts/db-backup.sh:/scripts/db-backup.sh:ro
       - ./backups:/backups

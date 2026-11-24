@@ -14,6 +14,9 @@
  *   node scripts/play-pricing.js com.muchie.ai.chat --region-percent TH=-20 [--apply]
  *     → CHỈ đổi giá của nước đó theo phần trăm so với giá ĐANG CHẠY ở nước đó (tiền địa phương), làm tròn về mức
  *       giá thường dùng ở nước đó; mọi nước khác (kể cả US) giữ nguyên. Có thể lặp lại cho nhiều nước.
+ *   node scripts/play-pricing.js com.muchie.ai.chat --region-us DE=1 --region-us MX=1.05 [--apply]
+ *     → CHỈ đổi giá nước đó về (giá US hiện tại của từng sản phẩm × hệ số), quy sang tiền địa phương bằng
+ *       convertRegionPrices (đã gồm thuế / cách làm tròn của Google Play); mọi nước khác (kể cả US) giữ nguyên.
  *   node scripts/play-pricing.js com.muchie.ai.chat --only FR,DE [--apply]
  *     → chỉ đổi các nước này (phải có trong RULES); các nước khác trong RULES giữ nguyên dù tỷ giá đã đổi.
  *
@@ -64,6 +67,17 @@ args.forEach((a, i) => {
   }
   regionPercents.set(region.toUpperCase(), Number(pct));
 });
+/** --region-us <nước>=<hệ số>: đặt giá nước đó = giá US × hệ số (quy đổi kiểu Google), có thể lặp lại. */
+const regionUs = new Map();
+args.forEach((a, i) => {
+  if (a !== '--region-us') return;
+  const [region, factor] = String(args[i + 1] ?? '').split('=');
+  if (!/^[A-Za-z]{2}$/.test(region ?? '') || !(Number(factor) > 0)) {
+    console.error('--region-us cần dạng <mã nước>=<hệ số so với giá US>, ví dụ DE=1');
+    process.exit(1);
+  }
+  regionUs.set(region.toUpperCase(), Number(factor));
+});
 /** --only <mã nước,...>: chỉ đổi các nước này. */
 const onlyArg = args[args.indexOf('--only') + 1];
 const only = args.includes('--only') ? new Set(String(onlyArg ?? '').toUpperCase().split(',').filter(Boolean)) : null;
@@ -74,7 +88,7 @@ if (only) {
     process.exit(1);
   }
 }
-const [pkg] = args.filter((a, i) => !a.startsWith('--') && !['--set-us', '--only', '--us-percent', '--region-percent'].includes(args[i - 1]));
+const [pkg] = args.filter((a, i) => !a.startsWith('--') && !['--set-us', '--only', '--us-percent', '--region-percent', '--region-us'].includes(args[i - 1]));
 if (!pkg) {
   console.error('Cách dùng: node scripts/play-pricing.js <packageName> [--apply]');
   process.exit(1);
@@ -216,7 +230,11 @@ async function plan(client, kind, product) {
       continue;
     }
     const us = usCfg.price;
-    for (const [region, divisor] of Object.entries(RULES).filter(([r]) => !only || only.has(r))) {
+    // --region-us: chỉ các nước được chỉ định, hệ số chia = 1 / hệ số nhân; bỏ qua RULES.
+    const targets = regionUs.size
+      ? [...regionUs].map(([r, factor]) => [r, 1 / factor])
+      : Object.entries(RULES).filter(([r]) => !only || only.has(r));
+    for (const [region, divisor] of targets) {
       const cfg = unit.configs.find((c) => c.regionCode === region);
       if (!cfg?.price) {
         rows.push({ unit, region, divisor, skip: 'chưa bán ở nước này' });
@@ -232,6 +250,11 @@ async function plan(client, kind, product) {
         rows.push({ unit, region, divisor, skip: `tiền tệ khác (${cfg.price.currencyCode} ≠ ${converted.currencyCode})` });
         continue;
       }
+      // --region-us chỉ dùng để giảm giá: nếu giá quy đổi cao hơn giá đang chạy thì giữ nguyên.
+      if (regionUs.size && fromMoney(converted) > fromMoney(cfg.price)) {
+        rows.push({ unit, region, divisor, us, usd, before: cfg.price, after: cfg.price, changed: false });
+        continue;
+      }
       rows.push({ unit, region, divisor, us, usd, before: cfg.price, after: converted, changed: !samePrice(cfg.price, converted) });
       cfg.price = converted;
     }
@@ -243,7 +266,8 @@ async function main() {
   const client = await auth.getClient();
   console.log(`App: ${pkg}   ${apply ? 'ÁP DỤNG' : 'XEM TRƯỚC (không sửa gì)'}`
     + `${usPercentArg !== null ? `   CHỈ ĐỔI GIÁ US ${usPercentArg > 0 ? '+' : ''}${usPercentArg}%` : ''}`
-    + `${regionPercents.size ? `   CHỈ ĐỔI ${[...regionPercents].map(([r, p]) => `${r} ${p > 0 ? '+' : ''}${p}%`).join(', ')} (so với giá đang chạy)` : ''}\n`);
+    + `${regionPercents.size ? `   CHỈ ĐỔI ${[...regionPercents].map(([r, p]) => `${r} ${p > 0 ? '+' : ''}${p}%`).join(', ')} (so với giá đang chạy)` : ''}`
+    + `${regionUs.size ? `   CHỈ ĐỔI ${[...regionUs].map(([r, f]) => `${r} = giá US × ${f}`).join(', ')}` : ''}\n`);
 
   const products = [
     ...(await listAll(client, `${API}/applications/${pkg}/oneTimeProducts`, 'oneTimeProducts')).map((p) => ({ kind: 'onetime', p })),
