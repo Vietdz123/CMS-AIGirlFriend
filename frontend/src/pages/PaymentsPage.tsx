@@ -18,6 +18,9 @@ interface Payment {
   note: string | null;
   hasReceipt: boolean;
   receiptName: string | null;
+  /** Chỉ khoản chi: đã thanh toán chưa và ngày thanh toán. */
+  paid: boolean;
+  paidAt: string | null;
 }
 
 const CURRENCIES = ['VND', 'USD', 'HKD'];
@@ -82,10 +85,12 @@ export function PaymentsPage() {
   const [direction, setDirection] = useState<'' | Direction>('OUT');
   const [search, setSearch] = useState('');
   const [parties, setParties] = useState<string[]>([]);
+  // Lọc theo trạng thái thanh toán (chỉ khoản chi): '' = tất cả, '0' = chưa thanh toán, '1' = đã thanh toán.
+  const [paidFilter, setPaidFilter] = useState<'' | '0' | '1'>('');
   const [editing, setEditing] = useState<Payment | 'new' | null>(null);
   const [viewing, setViewing] = useState<Payment | null>(null);
 
-  const q = qs({ ...(range ?? {}), direction, parties, q: search.trim() || undefined });
+  const q = qs({ ...(range ?? {}), direction, parties, q: search.trim() || undefined, paid: direction !== 'IN' ? paidFilter || undefined : undefined });
   const data = useQuery({ queryKey: ['payments', q], queryFn: () => api<Payment[]>(`/payments?${q}`) });
   const partyList = useQuery({
     queryKey: ['payments', 'parties'],
@@ -98,11 +103,14 @@ export function PaymentsPage() {
   const rows = data.data ?? [];
 
   // Tổng theo tiền tệ (không cộng lẫn VND với USD).
-  const totals = new Map<string, { in: number; out: number }>();
+  const totals = new Map<string, { in: number; out: number; unpaid: number; unpaidCount: number }>();
   for (const r of rows) {
-    const t = totals.get(r.currency) ?? { in: 0, out: 0 };
+    const t = totals.get(r.currency) ?? { in: 0, out: 0, unpaid: 0, unpaidCount: 0 };
     if (r.direction === 'IN') t.in += r.amount;
-    else t.out += r.amount;
+    else {
+      t.out += r.amount;
+      if (!r.paid) { t.unpaid += r.amount; t.unpaidCount += 1; }
+    }
     totals.set(r.currency, t);
   }
 
@@ -133,6 +141,13 @@ export function PaymentsPage() {
               return { value: p, label: `${p} (${n})` };
             })} />
         </label>
+        {direction !== 'IN' && (
+          <div className="seg" title="Trạng thái thanh toán của khoản chi">
+            {([['', 'Mọi trạng thái'], ['0', 'Chưa thanh toán'], ['1', 'Đã thanh toán']] as const).map(([v, label]) => (
+              <button key={v} className={paidFilter === v ? 'active' : ''} onClick={() => setPaidFilter(v)}>{label}</button>
+            ))}
+          </div>
+        )}
         <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm trong ghi chú / tên…" />
       </div>
 
@@ -146,6 +161,12 @@ export function PaymentsPage() {
           <div className="card kpi">
             <div className="kpi-label">Tổng chi ({cur})</div>
             <div className="kpi-value error-text">−{amountText(t.out, cur)}</div>
+          </div>
+          <div className="card kpi">
+            <div className="kpi-label">Chi chưa thanh toán ({cur})</div>
+            <div className={`kpi-value ${t.unpaid > 0 ? 'warn-text' : 'muted'}`}>
+              {amountText(t.unpaid, cur)}{t.unpaidCount > 0 && <span className="small muted"> · {t.unpaidCount} khoản</span>}
+            </div>
           </div>
           <div className="card kpi">
             <div className="kpi-label">Chênh lệch ({cur})</div>
@@ -164,6 +185,7 @@ export function PaymentsPage() {
               <th>Loại</th>
               <th>Người trả / nhận</th>
               <th className="num">Khoản tiền</th>
+              <th title="Chỉ khoản chi. Đổi trạng thái trong form Sửa">Thanh toán</th>
               <th>Ghi chú</th>
               <th>Hoá đơn</th>
               <th />
@@ -178,6 +200,14 @@ export function PaymentsPage() {
                 <td className={`num ${r.direction === 'IN' ? 'pos' : 'neg'}`}>
                   {r.direction === 'IN' ? '+' : '−'}{amountText(r.amount, r.currency)}
                 </td>
+                <td>
+                  {/* Chỉ hiển thị; muốn đổi trạng thái thì vào Sửa (tránh bấm nhầm). */}
+                  {r.direction === 'OUT' ? (
+                    <span className={`badge ${r.paid ? 'success' : 'warn'}`}>
+                      {r.paid ? `Đã thanh toán${r.paidAt ? ` · ${r.paidAt}` : ''}` : 'Chưa thanh toán'}
+                    </span>
+                  ) : <span className="muted">—</span>}
+                </td>
                 <td className="small muted">{r.note}</td>
                 <td>{r.hasReceipt ? <button className="link" onClick={() => setViewing(r)}>Xem ảnh</button> : <span className="muted">—</span>}</td>
                 <td>
@@ -191,9 +221,9 @@ export function PaymentsPage() {
                 </td>
               </tr>
             ))}
-            {data.isLoading && <tr><td colSpan={7} className="center muted">Đang tải…</td></tr>}
-            {data.isError && <tr><td colSpan={7} className="center error-text">{(data.error as Error).message}</td></tr>}
-            {!data.isLoading && !data.isError && !rows.length && <tr><td colSpan={7} className="center muted">Chưa có khoản tiền nào trong khoảng này.</td></tr>}
+            {data.isLoading && <tr><td colSpan={8} className="center muted">Đang tải…</td></tr>}
+            {data.isError && <tr><td colSpan={8} className="center error-text">{(data.error as Error).message}</td></tr>}
+            {!data.isLoading && !data.isError && !rows.length && <tr><td colSpan={8} className="center muted">Chưa có khoản tiền nào trong khoảng này.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -214,6 +244,8 @@ function PaymentForm({ payment, onClose }: { payment: Payment | null; onClose: (
   const [note, setNote] = useState(payment?.note ?? '');
   const [file, setFile] = useState<File | null>(null);
   const [removeReceipt, setRemoveReceipt] = useState(false);
+  const [paid, setPaid] = useState(payment?.paid ?? false);
+  const [paidAt, setPaidAt] = useState(payment?.paidAt ?? daysAgo(0));
   const preview = file ? URL.createObjectURL(file) : null;
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
@@ -226,6 +258,10 @@ function PaymentForm({ payment, onClose }: { payment: Payment | null; onClose: (
       form.append('amount', amount);
       form.append('currency', currency);
       form.append('note', note);
+      if (direction === 'OUT') {
+        form.append('paid', paid ? '1' : '0');
+        if (paid) form.append('paidAt', paidAt);
+      }
       if (file) form.append('receipt', file);
       if (removeReceipt && !file) form.append('removeReceipt', '1');
       return payment ? sendForm(`/payments/${payment.id}`, 'PATCH', form) : sendForm('/payments', 'POST', form);
@@ -268,6 +304,16 @@ function PaymentForm({ payment, onClose }: { payment: Payment | null; onClose: (
             </select>
           </label>
         </div>
+        {direction === 'OUT' && (
+          <div className="row">
+            <label className="check">
+              <input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> Đã thanh toán
+            </label>
+            {paid && (
+              <label>Ngày thanh toán<input type="date" required value={paidAt} onChange={(e) => setPaidAt(e.target.value)} /></label>
+            )}
+          </div>
+        )}
         <label>Ghi chú (tuỳ chọn)<textarea rows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} /></label>
         <label>
           Ảnh hoá đơn (tuỳ chọn, tối đa 8 MB)

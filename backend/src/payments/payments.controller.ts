@@ -47,7 +47,7 @@ export class PaymentsController {
 
   /**
    * Query: from, to (YYYY-MM-DD, tuỳ chọn), direction (IN | OUT), parties (tên người, phân tách bằng dấu phẩy),
-   * q (tìm theo người / ghi chú).
+   * q (tìm theo người / ghi chú), paid (1 = đã thanh toán, 0 = chưa; chỉ áp dụng cho khoản chi).
    */
   @Get()
   async list(@Query() q: Record<string, string | undefined>) {
@@ -56,16 +56,18 @@ export class PaymentsController {
       ...(q.from || q.to ? { date: { ...(q.from ? { gte: toDbDate(q.from) } : {}), ...(q.to ? { lte: toDbDate(q.to) } : {}) } } : {}),
       ...(q.direction && DIRECTIONS.includes(q.direction as PaymentDirection) ? { direction: q.direction as PaymentDirection } : {}),
       ...(q.parties ? { party: { in: q.parties.split(',').map((p) => p.trim()).filter(Boolean) } } : {}),
+      ...(q.paid === '1' || q.paid === '0' ? { direction: 'OUT' as PaymentDirection, paid: q.paid === '1' } : {}),
       ...(q.q?.trim() ? { OR: [{ party: { contains: q.q.trim(), mode: 'insensitive' } }, { note: { contains: q.q.trim(), mode: 'insensitive' } }] } : {}),
     };
     const rows = await this.prisma.payment.findMany({
       where,
       orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
       // Không trả ảnh trong danh sách; ảnh lấy riêng qua /payments/:id/receipt.
-      select: { id: true, direction: true, date: true, party: true, amount: true, currency: true, note: true, receiptName: true, receiptType: true, createdAt: true },
+      select: { id: true, direction: true, date: true, party: true, amount: true, currency: true, note: true, receiptName: true, receiptType: true, paid: true, paidAt: true, createdAt: true },
     });
     return rows.map(({ receiptType, ...r }) => ({
       ...r, date: r.date.toISOString().slice(0, 10), amount: Number(r.amount), hasReceipt: !!receiptType,
+      paidAt: r.paidAt ? r.paidAt.toISOString().slice(0, 10) : null,
     }));
   }
 
@@ -123,7 +125,14 @@ function parse(b: Body) {
   if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('Khoản tiền phải là số lớn hơn 0');
   const currency = (b.currency || 'VND').toUpperCase();
   if (!/^[A-Z]{3}$/.test(currency)) throw new BadRequestException('Tiền tệ không hợp lệ');
-  return { direction, date: toDbDate(b.date), party: party.slice(0, 200), amount: new Prisma.Decimal(amount.toFixed(2)), currency, note: b.note?.trim().slice(0, 1000) || null };
+  // Trạng thái thanh toán chỉ có ở khoản chi; khoản nhận luôn để trống.
+  const paid = direction === 'OUT' && b.paid === '1';
+  if (paid && b.paidAt && !isIsoDate(b.paidAt)) throw new BadRequestException('Ngày thanh toán phải có dạng YYYY-MM-DD');
+  const paidAt = paid ? toDbDate(b.paidAt || b.date) : null;
+  return {
+    direction, date: toDbDate(b.date), party: party.slice(0, 200), amount: new Prisma.Decimal(amount.toFixed(2)), currency,
+    note: b.note?.trim().slice(0, 1000) || null, paid, paidAt,
+  };
 }
 
 function receipt(file?: UploadedImage) {

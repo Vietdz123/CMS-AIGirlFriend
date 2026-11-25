@@ -415,6 +415,9 @@ model Payment {
   receipt       Bytes?
   receiptType   String? // image/jpeg, image/png…
   receiptName   String?
+  /// Chỉ dùng cho khoản chi: đã thanh toán chưa, và ngày thanh toán.
+  paid          Boolean          @default(false)
+  paidAt        DateTime?        @db.Date
   createdById   String?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt

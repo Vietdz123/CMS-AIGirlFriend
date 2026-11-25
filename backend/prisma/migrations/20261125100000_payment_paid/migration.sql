@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Payment" ADD COLUMN "paid" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "paidAt" DATE;
